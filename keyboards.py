@@ -41,6 +41,10 @@ class AdminCallback(CallbackData, prefix="adm"):
     action: str  # "menu", "stats", "groups", "users", "broadcast", "warmup", "clearcache", "close"
 
 
+class HelpCallback(CallbackData, prefix="hlp"):
+    section: str  # "main", "student", "group", "commands"
+
+
 # -------------------------------------------------------------------------
 # Inline-клавиатуры для пошагового выбора
 # -------------------------------------------------------------------------
@@ -160,6 +164,71 @@ def get_schedule_nav_keyboard(
     return builder.as_markup()
 
 
+def get_help_inline_keyboard(
+    current_section: str = "main", show_back_to_menu: bool = True
+) -> InlineKeyboardMarkup:
+    """
+    Инлайн-клавиатура для интерактивного меню справки и инструкции.
+    Позволяет переключаться между разделами:
+    - Общая информация ('main')
+    - Студенту в ЛС ('student')
+    - Добавление в беседу ('group')
+    - Список команд ('commands')
+    """
+    builder = InlineKeyboardBuilder()
+
+    nav_buttons: list[InlineKeyboardButton] = []
+    if current_section != "student":
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text="📱 Для студента",
+                callback_data=HelpCallback(section="student").pack()
+            )
+        )
+    if current_section != "group":
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text="👥 Добавить в беседу",
+                callback_data=HelpCallback(section="group").pack()
+            )
+        )
+    if current_section != "commands":
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text="📋 Все команды",
+                callback_data=HelpCallback(section="commands").pack()
+            )
+        )
+    if current_section != "main":
+        nav_buttons.append(
+            InlineKeyboardButton(
+                text="📖 Обзор справки",
+                callback_data=HelpCallback(section="main").pack()
+            )
+        )
+
+    # Добавляем кнопки переключения секций по 2 в ряд
+    for i in range(0, len(nav_buttons), 2):
+        builder.row(*nav_buttons[i:i + 2])
+
+    builder.row(
+        InlineKeyboardButton(
+            text="💬 Связь с автором (@yapsychokid)",
+            url="https://t.me/yapsychokid"
+        )
+    )
+
+    if show_back_to_menu:
+        builder.row(
+            InlineKeyboardButton(
+                text="🏠 В главное меню",
+                callback_data=NavigationCallback(to="main_menu").pack()
+            )
+        )
+
+    return builder.as_markup()
+
+
 # -------------------------------------------------------------------------
 # Главное меню (ReplyKeyboard)
 # -------------------------------------------------------------------------
@@ -185,6 +254,9 @@ def get_main_reply_keyboard(
     )
     builder.row(
         KeyboardButton(text=notif_text),
+        KeyboardButton(text="📖 Инструкция"),
+    )
+    builder.row(
         KeyboardButton(text="👨‍💻 Связь с автором"),
     )
 

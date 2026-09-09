@@ -161,15 +161,16 @@ def test_timetable_formatting():
     assert "Расписание на неделю" in week_msgs[0]
 
 
-from handlers import are_today_pairs_finished
 from keyboards import (
     GroupCallback,
     SpecialtyCallback,
     get_groups_inline_keyboard,
+    get_help_inline_keyboard,
     get_main_reply_keyboard,
     get_schedule_nav_keyboard,
     get_specialties_inline_keyboard,
 )
+from handlers import are_today_pairs_finished, get_help_section_text
 
 
 def test_are_today_pairs_finished():
@@ -224,9 +225,10 @@ def test_keyboards_builder():
 
     # 4. Главное меню
     reply_kb = get_main_reply_keyboard(notifications_enabled=True)
-    assert len(reply_kb.keyboard) == 3
+    assert len(reply_kb.keyboard) == 4
     assert any("На сегодня" in btn.text for row in reply_kb.keyboard for btn in row)
     assert any("ВКЛ" in btn.text for row in reply_kb.keyboard for btn in row)
+    assert any("Инструкция" in btn.text for row in reply_kb.keyboard for btn in row)
     assert any("Связь с автором" in btn.text for row in reply_kb.keyboard for btn in row)
 
 
@@ -662,4 +664,48 @@ async def test_my_chat_member_event(test_db):
     call_args = mock_bot.send_message.call_args
     assert call_args.kwargs["chat_id"] == -100555666
     assert "08:00" in call_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_help_system():
+    """Тест интерактивной системы справки и инструкции."""
+    from handlers import cb_help_section, cmd_help
+    from keyboards import HelpCallback
+
+    # 1. Проверка генерации текстов для всех секций
+    for sec in ["main", "student", "group", "commands"]:
+        text = get_help_section_text(sec)
+        assert len(text) > 50
+        assert "yapsychokid" in text or "КТМУ" in text
+
+    assert "08:00" in get_help_section_text("group")
+    assert "/set_group" in get_help_section_text("group")
+    assert "прошедшее за сегодня" in get_help_section_text("student")
+
+    # 2. Проверка инлайн-клавиатуры справки
+    kb_main = get_help_inline_keyboard("main", show_back_to_menu=True)
+    btns = [btn.text for row in kb_main.inline_keyboard for btn in row]
+    assert any("Для студента" in b for b in btns)
+    assert any("Добавить в беседу" in b for b in btns)
+    assert any("Связь с автором" in b for b in btns)
+    assert any("В главное меню" in b for b in btns)
+
+    # 3. Тест обработчика команды cmd_help
+    mock_msg = MagicMock()
+    mock_msg.chat.type = "private"
+    mock_msg.answer = AsyncMock()
+    await cmd_help(mock_msg)
+    assert mock_msg.answer.call_count == 1
+    call_text = mock_msg.answer.call_args[0][0]
+    assert "Как пользоваться ботом" in call_text
+
+    # 4. Тест callback переключения секции
+    mock_cb = MagicMock()
+    mock_cb.message.chat.type = "private"
+    mock_cb.message.edit_text = AsyncMock()
+    mock_cb.answer = AsyncMock()
+    cb_data = HelpCallback(section="group")
+    await cb_help_section(mock_cb, cb_data)
+    assert mock_cb.message.edit_text.call_count == 1
+    assert "Как добавить бота в группу" in mock_cb.message.edit_text.call_args[0][0]
 

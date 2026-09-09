@@ -14,6 +14,7 @@ from database import Database, db as default_db
 from keyboards import (
     AdminCallback,
     GroupCallback,
+    HelpCallback,
     NavigationCallback,
     ScheduleNavCallback,
     SpecialtyCallback,
@@ -21,6 +22,7 @@ from keyboards import (
     get_admin_main_inline_keyboard,
     get_broadcast_cancel_inline_keyboard,
     get_groups_inline_keyboard,
+    get_help_inline_keyboard,
     get_main_reply_keyboard,
     get_schedule_nav_keyboard,
     get_specialties_inline_keyboard,
@@ -713,35 +715,106 @@ async def cmd_author(message: Message):
     await message.answer(author_text, reply_markup=builder.as_markup(), parse_mode="HTML")
 
 
+def get_help_section_text(section: str) -> str:
+    """
+    Формирует подробный и структурированный текст для каждого раздела справки и инструкции.
+    """
+    if section == "student":
+        return (
+            "📱 <b>Инструкция для студента (Личные сообщения):</b>\n\n"
+            "1️⃣ <b>Выбор группы:</b>\n"
+            "• При первом запуске (/start) выберите специальность и группу.\n"
+            "• Сменить группу можно в любой момент кнопкой «⚙️ Сменить группу» или командой /change_group.\n\n"
+            "2️⃣ <b>Просмотр расписания:</b>\n"
+            "• Кнопка «📅 На сегодня» (/today) — расписание на текущий день.\n"
+            "• <i>Умный режим:</i> если пары сегодня уже завершились (например, время 16:00, а последняя пара была до 15:30), "
+            "бот автоматически покажет расписание на завтра и предложит кнопку «⏪ Показать прошедшее за сегодня».\n"
+            "• Кнопка «📆 На завтра» (/tomorrow) — расписание на следующий день.\n"
+            "• Кнопка «🗓 На неделю» (/week) — полное расписание с понедельника по субботу.\n\n"
+            "3️⃣ <b>Уведомления:</b>\n"
+            "• <b>08:00</b> каждое утро — свежее утреннее расписание на день.\n"
+            "• <b>20:00</b> каждый вечер — расписание на завтрашний день.\n"
+            "• В течение дня — напоминания за 10 минут до начала каждой пары.\n"
+            "• Уведомления можно выключить/включить кнопкой «🔔 Уведомления» или командой /notifications.\n\n"
+            "👨‍💻 <i>Разработчик бота: @yapsychokid</i>"
+        )
+    elif section == "group":
+        return (
+            "👥 <b>Инструкция: Как добавить бота в группу (беседу):</b>\n\n"
+            "Вы можете добавить бота в общую беседу вашей студенческой группы, чтобы расписание приходило всем сразу!\n\n"
+            "<b>Шаг 1: Добавление бота</b>\n"
+            "• Откройте чат вашей группы в Telegram.\n"
+            "• Нажмите на название чата ➔ «Добавить участников» ➔ найдите бота по юзернейму и добавьте его.\n"
+            "• (Либо откройте профиль бота в Telegram и нажмите «Добавить в группу»).\n\n"
+            "<b>Шаг 2: Назначение прав</b>\n"
+            "• Назначьте бота <b>администратором</b> группы (либо убедитесь, что боту разрешено читать сообщения в чате).\n\n"
+            "<b>Шаг 3: Привязка учебной группы</b>\n"
+            "• Администратор чата должен отправить команду: /set_group\n"
+            "• В появившемся меню выберите вашу специальность и группу колледжа.\n\n"
+            "🎉 <b>Готово! Что будет дальше:</b>\n"
+            "• Бот будет <b>каждое утро ровно к 08:00</b> автоматически отправлять расписание на сегодня прямо в чат!\n"
+            "• Любой студент в группе может в любой момент написать /today, /tomorrow или /week.\n"
+            "• Спам перед каждой парой в группе отключен — только утренняя сводка к 8 утра.\n\n"
+            "👨‍💻 <i>Разработчик бота: @yapsychokid</i>"
+        )
+    elif section == "commands":
+        return (
+            "📋 <b>Полный список команд бота:</b>\n\n"
+            "• /start — Главное меню и запуск\n"
+            "• /today — Расписание на сегодня (с автопереходом на завтра после окончания пар)\n"
+            "• /tomorrow — Расписание на завтра\n"
+            "• /week — Расписание на всю учебную неделю\n"
+            "• /set_group — Настроить/сменить группу (работает и в ЛС, и в беседах)\n"
+            "• /change_group — Сменить личную учебную группу\n"
+            "• /notifications — Включение / выключение автоматических уведомлений\n"
+            "• /help — Инструкция и справка по работе бота\n"
+            "• /author — Связь с автором (@yapsychokid)\n\n"
+            "👑 <i>Команда администратора бота:</i> /admin\n"
+            "🌐 <i>Источник данных:</i> <a href='https://timetable-ktmu.ru/'>timetable-ktmu.ru</a>"
+        )
+    else:  # "main"
+        return (
+            "📖 <b>Как пользоваться ботом расписания КТМУ:</b>\n\n"
+            "Этот бот создан для студентов КТМУ и умеет быстро отдавать актуальное расписание пар, "
+            "присылать утренние и вечерние рассылки, а также работать в учебных беседах!\n\n"
+            "🔹 <b>В личных сообщениях:</b>\n"
+            "Используйте удобные кнопки главного меню под клавиатурой для быстрого просмотра на сегодня, "
+            "завтра и неделю. Бот сам понимает, когда пары кончились, и предлагает завтрашний день.\n\n"
+            "🔹 <b>В группах и беседах:</b>\n"
+            "Добавьте бота в чат своей учебной группы, напишите /set_group — и бот будет <b>каждое утро к 08:00</b> "
+            "присылать готовое расписание вашей группы всем однокурсникам!\n\n"
+            "👇 <i>Выберите раздел ниже для подробной инструкции:</i>"
+        )
+
+
 @router.message(Command("help"))
+@router.message(Command("guide"))
+@router.message(F.text == "📖 Инструкция")
 async def cmd_help(message: Message):
     """
-    Справка по доступным командам.
+    Интерактивная справка и подробная инструкция по использованию бота.
     """
-    builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(
-            text="💬 Связь с автором (@yapsychokid)",
-            url="https://t.me/yapsychokid"
-        )
-    )
-    help_text = (
-        "📖 <b>Справка по боту расписания КТМУ</b>\n\n"
-        "Доступные команды:\n"
-        "• /start — Запуск бота и выбор группы\n"
-        "• /today — Расписание на сегодня\n"
-        "• /tomorrow — Расписание на завтра\n"
-        "• /week — Расписание на текущую неделю\n"
-        "• /set_group — Выбрать/сменить группу (для себя или для чата)\n"
-        "• /change_group — Сменить личную учебную группу\n"
-        "• /notifications — Вкл/выкл уведомления\n"
-        "• /author — Связь с разработчиком\n"
-        "• /help — Показать эту справку\n\n"
-        "💡 <i>Бота можно добавлять в групповые чаты студентов! Он будет каждое утро к 08:00 присылать расписание прямо в чат группы.</i>\n\n"
-        "👨‍💻 <b>Автор / Разработчик:</b> @yapsychokid\n"
-        "🌐 Источник данных: <a href='https://timetable-ktmu.ru/'>timetable-ktmu.ru</a>"
-    )
-    await message.answer(help_text, reply_markup=builder.as_markup(), parse_mode="HTML", disable_web_page_preview=True)
+    is_group = message.chat.type in ("group", "supergroup")
+    section = "group" if is_group else "main"
+    text = get_help_section_text(section)
+    kb = get_help_inline_keyboard(current_section=section, show_back_to_menu=not is_group)
+    await message.answer(text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
+
+
+@router.callback_query(HelpCallback.filter())
+async def cb_help_section(callback: CallbackQuery, callback_data: HelpCallback):
+    """
+    Переключение разделов справки по нажатию инлайн-кнопок.
+    """
+    section = callback_data.section
+    is_group = callback.message.chat.type in ("group", "supergroup")
+    text = get_help_section_text(section)
+    kb = get_help_inline_keyboard(current_section=section, show_back_to_menu=not is_group)
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML", disable_web_page_preview=True)
+    except Exception:
+        pass
+    await callback.answer()
 
 
 # -------------------------------------------------------------------------
