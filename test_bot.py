@@ -568,3 +568,98 @@ async def test_admin_panel_security(test_db):
     await cmd_admin_panel(msg_admin, mock_state, database=test_db)
     assert "Панель администратора" in msg_admin.answer.call_args[0][0]
 
+
+@pytest.mark.asyncio
+async def test_is_group_admin():
+    """Тест проверки прав администратора в группах."""
+    from handlers import is_group_admin
+    mock_bot = MagicMock()
+
+    # 1. Личный чат (chat_id > 0) -> всегда True
+    assert await is_group_admin(mock_bot, chat_id=12345, user_id=12345) is True
+
+    # 2. Групповой чат (chat_id < 0), статус creator/administrator -> True
+    mock_admin_member = MagicMock()
+    mock_admin_member.status = "administrator"
+    mock_bot.get_chat_member = AsyncMock(return_value=mock_admin_member)
+    assert await is_group_admin(mock_bot, chat_id=-100123, user_id=555) is True
+
+    # 3. Обычный участник (status = "member") -> False
+    mock_user_member = MagicMock()
+    mock_user_member.status = "member"
+    mock_bot.get_chat_member = AsyncMock(return_value=mock_user_member)
+    assert await is_group_admin(mock_bot, chat_id=-100123, user_id=777) is False
+
+
+@pytest.mark.asyncio
+async def test_group_chat_workflow_and_stats(test_db):
+    """Тест привязки группы колледжа к Telegram-чату и подсчета групповых чатов."""
+    from handlers import _get_authorized_user
+    from aiogram.types import Chat, Message, User
+
+    # 1. Чат без привязки
+    group_chat = Chat(id=-100999888, type="supergroup", title="Чат 1-ИС-10")
+    user = User(id=123, is_bot=False, first_name="Студент")
+    msg_unbound = MagicMock(spec=Message)
+    msg_unbound.chat = group_chat
+    msg_unbound.from_user = user
+    msg_unbound.answer = AsyncMock()
+
+    auth_unbound = await _get_authorized_user(msg_unbound, test_db)
+    assert auth_unbound is None
+    assert "еще не выбрана учебная группа" in msg_unbound.answer.call_args[0][0]
+
+    # 2. Привязываем группу колледжа к Telegram-чату
+    await test_db.upsert_user(
+        user_id=-100999888,
+        group_id="grp_10",
+        group_url="/grp10",
+        group_name="1-ИС-10",
+        notifications_enabled=True,
+        first_name="Чат 1-ИС-10",
+    )
+
+    auth_bound = await _get_authorized_user(msg_unbound, test_db)
+    assert auth_bound is not None
+    assert auth_bound["group_id"] == "grp_10"
+    assert auth_bound["group_name"] == "1-ИС-10"
+
+    # 3. Проверяем статистику: разделение на private_users и group_chats
+    await test_db.upsert_user(
+        user_id=456,
+        group_id="grp_10",
+        group_url="/grp10",
+        group_name="1-ИС-10",
+        notifications_enabled=True,
+        username="student_private",
+    )
+    stats = await test_db.get_admin_stats()
+    assert stats["group_chats"] >= 1
+    assert stats["private_users"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_my_chat_member_event(test_db):
+    """Тест приветственного сообщения при добавлении бота в группу."""
+    from handlers import on_my_chat_member_updated
+    from aiogram.types import Chat, ChatMemberAdministrator, ChatMemberUpdated
+
+    mock_bot = MagicMock()
+    mock_bot.send_message = AsyncMock()
+
+    event = MagicMock(spec=ChatMemberUpdated)
+    event.bot = mock_bot
+    event.chat = Chat(id=-100555666, type="supergroup", title="Классная беседа")
+    event.new_chat_member = MagicMock(spec=ChatMemberAdministrator)
+    event.new_chat_member.status = "administrator"
+
+    await test_db.upsert_groups_bulk([
+        {"id": "g1", "specialty_name": "Информатика", "group_name": "1-ИС-1", "relative_url": "/g1"}
+    ])
+
+    await on_my_chat_member_updated(event, database=test_db)
+    assert mock_bot.send_message.call_count == 1
+    call_args = mock_bot.send_message.call_args
+    assert call_args.kwargs["chat_id"] == -100555666
+    assert "08:00" in call_args.kwargs["text"]
+

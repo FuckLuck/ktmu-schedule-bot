@@ -160,11 +160,15 @@ class Database:
 
     async def get_admin_stats(self) -> dict[str, int]:
         """
-        Возвращает общую статистику пользователей для админ-панели.
+        Возвращает общую статистику пользователей и групповых чатов для админ-панели.
         """
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute("SELECT COUNT(*) FROM users;") as cur:
                 total_users = (await cur.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM users WHERE user_id > 0;") as cur:
+                private_users = (await cur.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM users WHERE user_id < 0;") as cur:
+                group_chats = (await cur.fetchone())[0]
             async with db.execute("SELECT COUNT(*) FROM users WHERE group_id IS NOT NULL AND group_id != '';") as cur:
                 with_group = (await cur.fetchone())[0]
             async with db.execute("SELECT COUNT(*) FROM users WHERE notifications_enabled = 1;") as cur:
@@ -173,6 +177,8 @@ class Database:
                 total_groups = (await cur.fetchone())[0]
             return {
                 "total_users": total_users,
+                "private_users": private_users,
+                "group_chats": group_chats,
                 "with_group": with_group,
                 "notifications_on": notifications_on,
                 "total_groups": total_groups,

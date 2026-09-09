@@ -68,6 +68,7 @@ async def on_startup(bot: Bot) -> None:
         BotCommand(command="today", description="Расписание на сегодня"),
         BotCommand(command="tomorrow", description="Расписание на завтра"),
         BotCommand(command="week", description="Расписание на неделю"),
+        BotCommand(command="set_group", description="Выбрать группу (для себя или чата)"),
         BotCommand(command="change_group", description="Сменить группу"),
         BotCommand(command="notifications", description="Настройка уведомлений"),
         BotCommand(command="admin", description="Панель администратора (ID: 870396858)"),

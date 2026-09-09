@@ -3,11 +3,11 @@ import logging
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, ChatMemberUpdated, Message
 
 from config import config
 from database import Database, db as default_db
@@ -80,17 +80,121 @@ def are_today_pairs_finished(lessons: list[dict], current_dt: datetime) -> bool:
     return current_dt.time() >= latest_time
 
 
+async def is_group_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
+    """
+    Проверяет, является ли пользователь администратором или создателем чата.
+    Для личных сообщений (chat_id > 0) всегда возвращает True.
+    """
+    if chat_id > 0:
+        return True
+    try:
+        member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+        return member.status in ("creator", "administrator")
+    except Exception as e:
+        logger.debug("Не удалось проверить статус пользователя %d в чате %d: %s", user_id, chat_id, e)
+        return True
+
+
+# -------------------------------------------------------------------------
+# ОБРАБОТКА ДОБАВЛЕНИЯ БОТА В ГРУППУ (my_chat_member)
+# -------------------------------------------------------------------------
+
+@router.my_chat_member()
+async def on_my_chat_member_updated(event: ChatMemberUpdated, database: Database = default_db):
+    """
+    Срабатывает при добавлении бота в группу или супергруппу.
+    Приветствует участников и предлагает администраторам выбрать учебную группу.
+    """
+    if event.new_chat_member.status in ("member", "administrator"):
+        chat = event.chat
+        if chat.type in ("group", "supergroup"):
+            specialties = await database.get_all_specialties()
+            kb = get_specialties_inline_keyboard(specialties, show_back_to_menu=False)
+            welcome_text = (
+                "👋 <b>Всем привет! Я бот расписания колледжа КТМУ.</b>\n\n"
+                "Я буду <b>каждое утро к 08:00</b> автоматически присылать в этот чат расписание занятий!\n\n"
+                "Доступные команды в чате:\n"
+                "• /today — Расписание на сегодня\n"
+                "• /tomorrow — Расписание на завтра\n"
+                "• /week — Расписание на неделю\n"
+                "• /set_group — Настройка учебной группы для этого чата\n\n"
+                "👇 <b>Администратор, выберите группу колледжа для этого чата:</b>"
+            )
+            try:
+                await event.bot.send_message(chat_id=chat.id, text=welcome_text, reply_markup=kb, parse_mode="HTML")
+            except Exception as e:
+                logger.warning("Не удалось отправить приветствие в группу %d: %s", chat.id, e)
+
+
 # -------------------------------------------------------------------------
 # КОМАНДЫ СТАРТА И ВЫБОРА ГРУППЫ
 # -------------------------------------------------------------------------
+
+@router.message(Command("set_group"))
+async def cmd_set_group(message: Message, database: Database = default_db):
+    """
+    Команда привязки или изменения группы колледжа для текущего чата или пользователя.
+    В групповых чатах настраивать группу могут только администраторы.
+    """
+    is_group = message.chat.type in ("group", "supergroup")
+    if is_group:
+        is_admin = await is_group_admin(message.bot, message.chat.id, message.from_user.id)
+        if not is_admin:
+            await message.answer("⚠️ Настраивать учебную группу для этого чата могут только администраторы.")
+            return
+
+    specialties = await database.get_all_specialties()
+    if not specialties:
+        await message.answer("⚠️ Список специальностей сейчас пуст. Пожалуйста, попробуйте через минуту.")
+        return
+
+    kb = get_specialties_inline_keyboard(specialties, show_back_to_menu=not is_group)
+    chat_label = f"для чата <b>{message.chat.title}</b>" if is_group and message.chat.title else ""
+    await message.answer(
+        f"🎯 <b>Выбор учебной группы {chat_label}</b> (Шаг 1 из 2):\n\n"
+        "Выберите вашу <b>специальность</b>:",
+        reply_markup=kb,
+        parse_mode="HTML"
+    )
+
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, database: Database = default_db):
     """
     Хэндлер команды /start.
-    Если пользователь новый или не выбрал группу -> запускает выбор специальности.
-    Если группа уже выбрана -> приветствует и показывает главное меню.
+    В групповом чате: приветствие группы и статус привязки.
+    В личном чате: регистрация студента и главное меню.
     """
+    is_group = message.chat.type in ("group", "supergroup")
+
+    if is_group:
+        chat_id = message.chat.id
+        chat_data = await database.get_user(chat_id)
+        if not chat_data or not chat_data.get("group_id"):
+            is_admin = await is_group_admin(message.bot, chat_id, message.from_user.id)
+            if not is_admin:
+                await message.answer(
+                    "👋 Привет! Этот чат пока не привязан к группе колледжа КТМУ.\n"
+                    "Попросите администратора чата настроить группу командой /set_group."
+                )
+                return
+            await cmd_set_group(message, database)
+            return
+        else:
+            group_name = chat_data.get("group_name", "не указана")
+            await message.answer(
+                f"👋 Этот чат привязан к группе: <b>{group_name}</b>.\n\n"
+                "🌅 Расписание автоматически отправляется сюда <b>каждое утро к 08:00</b>.\n\n"
+                "Команды для просмотра:\n"
+                "• /today — Расписание на сегодня\n"
+                "• /tomorrow — Расписание на завтра\n"
+                "• /week — Расписание на неделю\n"
+                "• /set_group — Сменить учебную группу",
+                parse_mode="HTML"
+            )
+            return
+
+    # Личные сообщения (private chat)
     user_id = message.from_user.id
     username = message.from_user.username
     first_name = message.from_user.first_name
@@ -100,7 +204,6 @@ async def cmd_start(message: Message, database: Database = default_db):
     user = await database.get_user(user_id)
 
     if not user or not user.get("group_id"):
-        # Пользователь новый -> запускаем пошаговый выбор группы без кнопки «Вперед»
         specialties = await database.get_all_specialties()
         if not specialties:
             await message.answer(
@@ -174,6 +277,23 @@ async def cb_back_to_main_menu(callback: CallbackQuery, database: Database = def
     """
     Кнопка «Назад в главное меню».
     """
+    is_group = callback.message.chat.type in ("group", "supergroup")
+    if is_group:
+        try:
+            await callback.message.edit_text(
+                "🏠 <b>Меню группы КТМУ</b>\n\n"
+                "Используйте команды чата для просмотра расписания:\n"
+                "• /today — Расписание на сегодня\n"
+                "• /tomorrow — Расписание на завтра\n"
+                "• /week — Расписание на неделю\n"
+                "• /set_group — Настройка учебной группы",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
+        await callback.answer()
+        return
+
     user_id = callback.from_user.id
     user = await database.get_user(user_id)
     notif = user.get("notifications_enabled", True) if user else True
@@ -200,6 +320,13 @@ async def cb_select_specialty(
     """
     Шаг 2: Пользователь нажал на специальность -> показываем список групп.
     """
+    is_group = callback.message.chat.type in ("group", "supergroup")
+    if is_group:
+        is_admin = await is_group_admin(callback.bot, callback.message.chat.id, callback.from_user.id)
+        if not is_admin:
+            await callback.answer("⚠️ Только администраторы чата могут выбирать группу!", show_alert=True)
+            return
+
     specialties = await database.get_all_specialties()
     idx = callback_data.idx
 
@@ -238,12 +365,53 @@ async def cb_select_group(
         await callback.answer("Информация о группе не найдена.", show_alert=True)
         return
 
-    user_id = callback.from_user.id
-    username = callback.from_user.username
-    first_name = callback.from_user.first_name
     group_name = group["group_name"]
     relative_url = group["relative_url"]
     full_group_url = f"{config.BASE_URL.rstrip('/')}{relative_url}"
+
+    is_group = callback.message.chat.type in ("group", "supergroup")
+    if is_group:
+        is_admin = await is_group_admin(callback.bot, callback.message.chat.id, callback.from_user.id)
+        if not is_admin:
+            await callback.answer("⚠️ Только администраторы чата могут выбирать группу!", show_alert=True)
+            return
+
+        chat_id = callback.message.chat.id
+        chat_title = callback.message.chat.title or "Групповой чат"
+
+        # Сохраняем группу для группового чата в SQLite
+        await database.upsert_user(
+            user_id=chat_id,
+            group_id=group_id,
+            group_url=full_group_url,
+            group_name=group_name,
+            notifications_enabled=True,
+            username=None,
+            first_name=chat_title,
+        )
+
+        # Фоновый мгновенный прогрев расписания
+        asyncio.create_task(timetable_parser.preload_group_schedule(group_id, full_group_url))
+
+        await callback.message.edit_text(
+            f"✅ <b>Чат успешно привязан к группе:</b> <code>{group_name}</code>\n"
+            f"🔗 Ссылка на расписание: <a href='{full_group_url}'>{relative_url}</a>\n\n"
+            "🌅 <b>Каждое утро к 08:00</b> бот будет автоматически отправлять сюда актуальное расписание на текущий день!\n\n"
+            "Доступные команды в чате:\n"
+            "• /today — Расписание на сегодня\n"
+            "• /tomorrow — Расписание на завтра\n"
+            "• /week — Расписание на неделю\n"
+            "• /set_group — Настройка учебной группы",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+        await callback.answer("Группа для чата успешно сохранена!")
+        return
+
+    # Личные сообщения (private chat)
+    user_id = callback.from_user.id
+    username = callback.from_user.username
+    first_name = callback.from_user.first_name
 
     # Сохраняем пользователя в SQLite с данными профиля
     await database.upsert_user(
@@ -285,12 +453,20 @@ async def cb_select_group(
 # -------------------------------------------------------------------------
 
 async def _get_authorized_user(message: Message, database: Database) -> dict | None:
-    """Вспомогательная функция проверки привязки группы у пользователя."""
-    user = await database.get_user(message.from_user.id)
+    """Вспомогательная функция проверки привязки группы у пользователя или чата."""
+    is_group = message.chat.type in ("group", "supergroup")
+    target_id = message.chat.id if is_group else message.from_user.id
+    user = await database.get_user(target_id)
     if not user or not user.get("group_id"):
-        await message.answer(
-            "⚠️ Сначала выберите вашу группу с помощью команды /start или /change_group."
-        )
+        if is_group:
+            await message.answer(
+                "⚠️ Для этого чата еще не выбрана учебная группа колледжа.\n"
+                "Администратор может привязать группу командой /set_group."
+            )
+        else:
+            await message.answer(
+                "⚠️ Сначала выберите вашу группу с помощью команды /start или /change_group."
+            )
         return None
     return user
 
@@ -394,9 +570,12 @@ async def cb_schedule_nav(
     - tomorrow: переход к расписанию на завтра
     - week: расписание на неделю
     """
-    user = await database.get_user(callback.from_user.id)
+    is_group = callback.message.chat.type in ("group", "supergroup")
+    target_id = callback.message.chat.id if is_group else callback.from_user.id
+    user = await database.get_user(target_id)
     if not user or not user.get("group_id"):
-        await callback.answer("Сначала выберите группу: /start", show_alert=True)
+        prompt = "Для этого чата еще не выбрана группа: /set_group" if is_group else "Сначала выберите группу: /start"
+        await callback.answer(prompt, show_alert=True)
         return
 
     group_id = user["group_id"]
@@ -549,14 +728,16 @@ async def cmd_help(message: Message):
     help_text = (
         "📖 <b>Справка по боту расписания КТМУ</b>\n\n"
         "Доступные команды:\n"
-        "/start — Запуск бота и выбор группы\n"
-        "/today — Расписание на сегодня\n"
-        "/tomorrow — Расписание на завтра\n"
-        "/week — Расписание на текущую неделю\n"
-        "/change_group — Сменить учебную группу\n"
-        "/notifications — Вкл/выкл уведомления\n"
-        "/author — Связь с разработчиком\n"
-        "/help — Показать эту справку\n\n"
+        "• /start — Запуск бота и выбор группы\n"
+        "• /today — Расписание на сегодня\n"
+        "• /tomorrow — Расписание на завтра\n"
+        "• /week — Расписание на текущую неделю\n"
+        "• /set_group — Выбрать/сменить группу (для себя или для чата)\n"
+        "• /change_group — Сменить личную учебную группу\n"
+        "• /notifications — Вкл/выкл уведомления\n"
+        "• /author — Связь с разработчиком\n"
+        "• /help — Показать эту справку\n\n"
+        "💡 <i>Бота можно добавлять в групповые чаты студентов! Он будет каждое утро к 08:00 присылать расписание прямо в чат группы.</i>\n\n"
         "👨‍💻 <b>Автор / Разработчик:</b> @yapsychokid\n"
         "🌐 Источник данных: <a href='https://timetable-ktmu.ru/'>timetable-ktmu.ru</a>"
     )
@@ -585,9 +766,11 @@ async def cmd_admin_panel(message: Message, state: FSMContext, database: Databas
     text = (
         "👑 <b>Панель администратора КТМУ</b>\n\n"
         f"👤 <b>Администратор:</b> ID <code>{user_id}</code>\n"
-        f"📊 <b>Всего пользователей:</b> <code>{stats['total_users']}</code>\n"
+        f"📊 <b>Всего подключений:</b> <code>{stats['total_users']}</code>\n"
+        f"👤 <b>Личных диалогов:</b> <code>{stats.get('private_users', stats['total_users'])}</code>\n"
+        f"💬 <b>Групповых чатов:</b> <code>{stats.get('group_chats', 0)}</code>\n"
         f"🎓 <b>Выбрали группу:</b> <code>{stats['with_group']}</code>\n"
-        f"🔔 <b>Включили уведомления:</b> <code>{stats['notifications_on']}</code>\n"
+        f"🔔 <b>Включили рассылки:</b> <code>{stats['notifications_on']}</code>\n"
         f"🏛 <b>Групп колледжа в базе:</b> <code>{stats['total_groups']}</code>\n\n"
         "Выберите необходимое действие в меню ниже:"
     )
@@ -618,9 +801,11 @@ async def cb_admin_actions(
         text = (
             "👑 <b>Панель администратора КТМУ</b>\n\n"
             f"👤 <b>Администратор:</b> ID <code>{user_id}</code>\n"
-            f"📊 <b>Всего пользователей:</b> <code>{stats['total_users']}</code>\n"
+            f"📊 <b>Всего подключений:</b> <code>{stats['total_users']}</code>\n"
+            f"👤 <b>Личных диалогов:</b> <code>{stats.get('private_users', stats['total_users'])}</code>\n"
+            f"💬 <b>Групповых чатов:</b> <code>{stats.get('group_chats', 0)}</code>\n"
             f"🎓 <b>Выбрали группу:</b> <code>{stats['with_group']}</code>\n"
-            f"🔔 <b>Включили уведомления:</b> <code>{stats['notifications_on']}</code>\n"
+            f"🔔 <b>Включили рассылки:</b> <code>{stats['notifications_on']}</code>\n"
             f"🏛 <b>Групп колледжа в базе:</b> <code>{stats['total_groups']}</code>\n\n"
             "Выберите необходимое действие в меню ниже:"
         )
@@ -635,8 +820,10 @@ async def cb_admin_actions(
         pct_notif = (stats['notifications_on'] / total) * 100
         text = (
             "📊 <b>Детальная статистика бота</b>\n\n"
-            f"👥 <b>Всего пользователей:</b> <code>{stats['total_users']}</code>\n"
-            f"🎓 <b>Студентов с выбранной группой:</b> <code>{stats['with_group']}</code> ({pct_group:.1f}%)\n"
+            f"👥 <b>Всего в базе:</b> <code>{stats['total_users']}</code>\n"
+            f"👤 <b>Личных диалогов (студенты):</b> <code>{stats.get('private_users', 0)}</code>\n"
+            f"💬 <b>Групповых чатов (классы/группы):</b> <code>{stats.get('group_chats', 0)}</code>\n"
+            f"🎓 <b>Выбрали группу:</b> <code>{stats['with_group']}</code> ({pct_group:.1f}%)\n"
             f"🔔 <b>Подписчиков на рассылки:</b> <code>{stats['notifications_on']}</code> ({pct_notif:.1f}%)\n"
             f"🏛 <b>Групп в базе данных:</b> <code>{stats['total_groups']}</code>\n"
         )
