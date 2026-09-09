@@ -22,6 +22,21 @@ class Settings(BaseSettings):
     TIMEZONE: str = "Europe/Moscow"
     CACHE_TTL_HOURS: int = 6
     THROTTLING_RATE_LIMIT: float = 0.8
+    ADMIN_IDS_RAW: str = "870396858"
+
+    @property
+    def ADMIN_IDS(self) -> list[int]:
+        """Парсит список ID администраторов из строки с разделителями."""
+        ids: list[int] = []
+        for part in str(self.ADMIN_IDS_RAW).split(","):
+            part = part.strip()
+            if part.isdigit():
+                ids.append(int(part))
+        return ids if ids else [870396858]
+
+    def is_admin(self, user_id: int) -> bool:
+        """Проверяет, является ли пользователь администратором."""
+        return user_id in self.ADMIN_IDS
 
     # Время стандартных пар КТМУ по умолчанию (если не пришли из API)
     DEFAULT_PERIOD_TIMES: list[str] = [

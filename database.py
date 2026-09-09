@@ -33,9 +33,25 @@ class Database:
                     group_id TEXT,
                     group_url TEXT,
                     group_name TEXT,
-                    notifications_enabled BOOLEAN DEFAULT 1
+                    notifications_enabled BOOLEAN DEFAULT 1,
+                    username TEXT,
+                    first_name TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+
+            # Безопасная миграция существующих баз данных (добавление новых колонок)
+            async with db.execute("PRAGMA table_info(users);") as cursor:
+                columns = {row[1] for row in await cursor.fetchall()}
+            if "username" not in columns:
+                await db.execute("ALTER TABLE users ADD COLUMN username TEXT;")
+            if "first_name" not in columns:
+                await db.execute("ALTER TABLE users ADD COLUMN first_name TEXT;")
+            if "created_at" not in columns:
+                await db.execute("ALTER TABLE users ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+            if "last_active_at" not in columns:
+                await db.execute("ALTER TABLE users ADD COLUMN last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
             # 2. Таблица groups
             await db.execute("""
@@ -76,7 +92,7 @@ class Database:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                "SELECT user_id, group_id, group_url, group_name, notifications_enabled FROM users WHERE user_id = ?",
+                "SELECT user_id, group_id, group_url, group_name, notifications_enabled, username, first_name, created_at, last_active_at FROM users WHERE user_id = ?",
                 (user_id,)
             ) as cursor:
                 row = await cursor.fetchone()
@@ -86,7 +102,11 @@ class Database:
                         "group_id": row["group_id"],
                         "group_url": row["group_url"],
                         "group_name": row["group_name"],
-                        "notifications_enabled": bool(row["notifications_enabled"])
+                        "notifications_enabled": bool(row["notifications_enabled"]),
+                        "username": row["username"],
+                        "first_name": row["first_name"],
+                        "created_at": row["created_at"],
+                        "last_active_at": row["last_active_at"],
                     }
                 return None
 
@@ -96,22 +116,129 @@ class Database:
         group_id: str,
         group_url: str,
         group_name: str,
-        notifications_enabled: bool = True
+        notifications_enabled: bool = True,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
     ) -> None:
         """
-        Создает или обновляет данные пользователя (выбор группы).
+        Создает или обновляет данные пользователя (выбор группы и профиль).
         """
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("""
-                INSERT INTO users (user_id, group_id, group_url, group_name, notifications_enabled)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO users (user_id, group_id, group_url, group_name, notifications_enabled, username, first_name, last_active_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(user_id) DO UPDATE SET
                     group_id = excluded.group_id,
                     group_url = excluded.group_url,
-                    group_name = excluded.group_name;
-            """, (user_id, group_id, group_url, group_name, int(notifications_enabled)))
+                    group_name = excluded.group_name,
+                    username = COALESCE(excluded.username, users.username),
+                    first_name = COALESCE(excluded.first_name, users.first_name),
+                    last_active_at = CURRENT_TIMESTAMP;
+            """, (user_id, group_id, group_url, group_name, int(notifications_enabled), username, first_name))
             await db.commit()
             logger.info("Пользователь %d привязан к группе %s (%s)", user_id, group_name, group_id)
+
+    async def touch_user(
+        self,
+        user_id: int,
+        username: Optional[str] = None,
+        first_name: Optional[str] = None,
+    ) -> None:
+        """
+        Обновляет время активности и профиль пользователя при взаимодействии.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                INSERT INTO users (user_id, username, first_name, last_active_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    username = COALESCE(excluded.username, users.username),
+                    first_name = COALESCE(excluded.first_name, users.first_name),
+                    last_active_at = CURRENT_TIMESTAMP;
+            """, (user_id, username, first_name))
+            await db.commit()
+
+    async def get_admin_stats(self) -> dict[str, int]:
+        """
+        Возвращает общую статистику пользователей для админ-панели.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT COUNT(*) FROM users;") as cur:
+                total_users = (await cur.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM users WHERE group_id IS NOT NULL AND group_id != '';") as cur:
+                with_group = (await cur.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM users WHERE notifications_enabled = 1;") as cur:
+                notifications_on = (await cur.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM groups;") as cur:
+                total_groups = (await cur.fetchone())[0]
+            return {
+                "total_users": total_users,
+                "with_group": with_group,
+                "notifications_on": notifications_on,
+                "total_groups": total_groups,
+            }
+
+    async def get_top_groups(self, limit: int = 15) -> list[dict[str, Any]]:
+        """
+        Возвращает топ групп по количеству зарегистрированных студентов.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("""
+                SELECT group_name, COUNT(*) as count
+                FROM users
+                WHERE group_name IS NOT NULL AND group_name != ''
+                GROUP BY group_name
+                ORDER BY count DESC, group_name ASC
+                LIMIT ?;
+            """, (limit,)) as cur:
+                rows = await cur.fetchall()
+                return [{"group_name": r["group_name"], "count": r["count"]} for r in rows]
+
+    async def get_recent_users(self, limit: int = 20) -> list[dict[str, Any]]:
+        """
+        Возвращает список последних пользователей бота с их данными.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("""
+                SELECT user_id, username, first_name, group_name, notifications_enabled, created_at, last_active_at
+                FROM users
+                ORDER BY created_at DESC, user_id DESC
+                LIMIT ?;
+            """, (limit,)) as cur:
+                rows = await cur.fetchall()
+                return [dict(r) for r in rows]
+
+    async def get_all_user_ids(self) -> list[int]:
+        """
+        Возвращает список ID всех пользователей для массовой рассылки.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT user_id FROM users;") as cur:
+                rows = await cur.fetchall()
+                return [r[0] for r in rows]
+
+    async def get_active_group_ids(self) -> list[str]:
+        """
+        Возвращает список уникальных group_id выбранных студентами групп.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT DISTINCT group_id FROM users WHERE group_id IS NOT NULL AND group_id != '';"
+            ) as cur:
+                rows = await cur.fetchall()
+                return [r[0] for r in rows]
+
+    async def clear_timetable_cache(self) -> int:
+        """
+        Очищает все записи в таблице timetable_cache.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("DELETE FROM timetable_cache;") as cur:
+                deleted = cur.rowcount
+            await db.commit()
+            return deleted
 
     async def set_user_notifications(self, user_id: int, enabled: bool) -> None:
         """

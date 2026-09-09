@@ -422,3 +422,149 @@ def test_throttling_stale_cleanup():
     assert 102 in middleware._last_request_time
     assert 102 in middleware._user_warned
 
+
+def test_admin_config_and_permissions():
+    """Тест проверки прав администратора в config."""
+    from config import Settings
+    s = Settings(ADMIN_IDS_RAW="870396858, 999111")
+    assert s.is_admin(870396858) is True
+    assert s.is_admin(999111) is True
+    assert s.is_admin(123456) is False
+
+
+@pytest.mark.asyncio
+async def test_database_admin_stats_and_profile(test_db):
+    """Тест сбора админ-статистики, топа групп и профилей пользователей."""
+    # Создаем тестовые группы
+    await test_db.upsert_groups_bulk([
+        {"id": "g1", "specialty_name": "Спец 1", "group_name": "1-ИС-1", "relative_url": "/g1"},
+        {"id": "g2", "specialty_name": "Спец 1", "group_name": "1-ИС-2", "relative_url": "/g2"},
+    ])
+
+    # 1. Добавляем пользователей с username и first_name
+    await test_db.upsert_user(
+        user_id=870396858,
+        group_id="g1",
+        group_url="/g1",
+        group_name="1-ИС-1",
+        notifications_enabled=True,
+        username="yapsychokid",
+        first_name="Админ",
+    )
+    await test_db.upsert_user(
+        user_id=1002,
+        group_id="g1",
+        group_url="/g1",
+        group_name="1-ИС-1",
+        notifications_enabled=False,
+        username="student1",
+        first_name="Студент 1",
+    )
+    await test_db.upsert_user(
+        user_id=1003,
+        group_id="g2",
+        group_url="/g2",
+        group_name="1-ИС-2",
+        notifications_enabled=True,
+        username="student2",
+        first_name="Студент 2",
+    )
+
+    # 2. Проверяем get_user
+    user = await test_db.get_user(870396858)
+    assert user["username"] == "yapsychokid"
+    assert user["first_name"] == "Админ"
+    assert user["group_name"] == "1-ИС-1"
+
+    # 3. touch_user
+    await test_db.touch_user(1004, username="newbie", first_name="Новичок")
+    new_user = await test_db.get_user(1004)
+    assert new_user is not None
+    assert new_user["username"] == "newbie"
+
+    # 4. Проверяем get_admin_stats
+    stats = await test_db.get_admin_stats()
+    assert stats["total_users"] == 4
+    assert stats["with_group"] == 3
+    assert stats["notifications_on"] == 3  # 870396858, 1003, и 1004 (по умолчанию DEFAULT 1)
+    assert stats["total_groups"] == 2
+
+    # 5. Проверяем get_top_groups
+    top = await test_db.get_top_groups()
+    assert len(top) == 2
+    assert top[0]["group_name"] == "1-ИС-1"
+    assert top[0]["count"] == 2
+    assert top[1]["group_name"] == "1-ИС-2"
+    assert top[1]["count"] == 1
+
+    # 6. Проверяем get_all_user_ids
+    uids = await test_db.get_all_user_ids()
+    assert set(uids) == {870396858, 1002, 1003, 1004}
+
+    # 7. Проверяем get_active_group_ids
+    active_grps = await test_db.get_active_group_ids()
+    assert set(active_grps) == {"g1", "g2"}
+
+
+@pytest.mark.asyncio
+async def test_instant_timetable_ram_and_sqlite_cache(test_db):
+    """Тест мгновенной отдачи расписания через RAM-кэш и SQLite."""
+    from timetable_parser import TimetableParser
+    parser = TimetableParser(database=test_db)
+
+    test_date = date(2026, 9, 10)
+    date_str = test_date.isoformat()
+    mock_schedule = {"date": date_str, "lessons": [{"subject": "Физика", "pair_number": 1}]}
+
+    # 1. Сохраняем в SQLite
+    await test_db.save_cached_timetable("grp_test", date_str, mock_schedule)
+
+    # 2. Первый запрос: должен подгрузить из SQLite и записать в RAM-кэш
+    with patch.object(parser, "_parse_schedule_from_api") as mock_api:
+        sched1 = await parser.fetch_day_schedule("grp_test", target_date=test_date)
+        assert sched1["lessons"][0]["subject"] == "Физика"
+        # Сетевой API не должен был вызываться!
+        assert mock_api.call_count == 0
+        # Проверяем, что в RAM-кэше появилась запись
+        assert ("grp_test", date_str) in parser._ram_day_cache
+
+    # 3. Второй запрос: должен мгновенно вернуться из RAM-кэша без обращения к БД
+    with patch.object(test_db, "get_cached_timetable") as mock_db_cache:
+        sched2 = await parser.fetch_day_schedule("grp_test", target_date=test_date)
+        assert sched2["lessons"][0]["subject"] == "Физика"
+        # Даже SQLite не вызывался!
+        assert mock_db_cache.call_count == 0
+
+    # 4. Очистка кэша
+    parser.clear_ram_cache()
+    assert ("grp_test", date_str) not in parser._ram_day_cache
+    deleted = await test_db.clear_timetable_cache()
+    assert deleted >= 1
+    assert await test_db.get_cached_timetable("grp_test", date_str) is None
+
+
+@pytest.mark.asyncio
+async def test_admin_panel_security(test_db):
+    """Тест защиты панели администратора от неавторизованных пользователей."""
+    from handlers import cmd_admin_panel
+    from aiogram.types import Message, User
+
+    # 1. Не-администратор (ID: 111222)
+    user_non_admin = User(id=111222, is_bot=False, first_name="Обычный юзер")
+    msg_non_admin = MagicMock(spec=Message)
+    msg_non_admin.from_user = user_non_admin
+    msg_non_admin.answer = AsyncMock()
+    mock_state = AsyncMock()
+
+    await cmd_admin_panel(msg_non_admin, mock_state, database=test_db)
+    assert "Доступ запрещен" in msg_non_admin.answer.call_args[0][0]
+
+    # 2. Администратор (ID: 870396858)
+    user_admin = User(id=870396858, is_bot=False, first_name="Админ")
+    msg_admin = MagicMock(spec=Message)
+    msg_admin.from_user = user_admin
+    msg_admin.answer = AsyncMock()
+
+    await cmd_admin_panel(msg_admin, mock_state, database=test_db)
+    assert "Панель администратора" in msg_admin.answer.call_args[0][0]
+

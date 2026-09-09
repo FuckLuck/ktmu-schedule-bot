@@ -37,6 +37,10 @@ class ScheduleNavCallback(CallbackData, prefix="schnav"):
     date_str: str  # YYYY-MM-DD
 
 
+class AdminCallback(CallbackData, prefix="adm"):
+    action: str  # "menu", "stats", "groups", "users", "broadcast", "warmup", "clearcache", "close"
+
+
 # -------------------------------------------------------------------------
 # Inline-клавиатуры для пошагового выбора
 # -------------------------------------------------------------------------
@@ -160,9 +164,12 @@ def get_schedule_nav_keyboard(
 # Главное меню (ReplyKeyboard)
 # -------------------------------------------------------------------------
 
-def get_main_reply_keyboard(notifications_enabled: bool = True) -> ReplyKeyboardMarkup:
+def get_main_reply_keyboard(
+    notifications_enabled: bool = True, is_admin: bool = False
+) -> ReplyKeyboardMarkup:
     """
     Основное меню бота с кнопками быстрого доступа к расписанию и настройкам.
+    Для администраторов автоматически добавляется кнопка входа в админ-панель.
     """
     builder = ReplyKeyboardBuilder()
 
@@ -181,4 +188,87 @@ def get_main_reply_keyboard(notifications_enabled: bool = True) -> ReplyKeyboard
         KeyboardButton(text="👨‍💻 Связь с автором"),
     )
 
+    if is_admin:
+        builder.row(
+            KeyboardButton(text="👑 Админ-панель")
+        )
+
     return builder.as_markup(resize_keyboard=True)
+
+
+# -------------------------------------------------------------------------
+# Клавиатуры админ-панели
+# -------------------------------------------------------------------------
+
+def get_admin_main_inline_keyboard() -> InlineKeyboardMarkup:
+    """
+    Главная клавиатура админ-панели управления ботом.
+    """
+    builder = InlineKeyboardBuilder()
+
+    builder.row(
+        InlineKeyboardButton(
+            text="📊 Статистика",
+            callback_data=AdminCallback(action="stats").pack()
+        ),
+        InlineKeyboardButton(
+            text="👥 Топ групп",
+            callback_data=AdminCallback(action="groups").pack()
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="📋 Последние пользователи",
+            callback_data=AdminCallback(action="users").pack()
+        ),
+        InlineKeyboardButton(
+            text="📢 Рассылка всем",
+            callback_data=AdminCallback(action="broadcast").pack()
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="⚡ Прогреть кэш",
+            callback_data=AdminCallback(action="warmup").pack()
+        ),
+        InlineKeyboardButton(
+            text="🗑 Очистить кэш",
+            callback_data=AdminCallback(action="clearcache").pack()
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ Закрыть панель",
+            callback_data=AdminCallback(action="close").pack()
+        )
+    )
+
+    return builder.as_markup()
+
+
+def get_admin_back_inline_keyboard() -> InlineKeyboardMarkup:
+    """
+    Кнопка возврата в меню админ-панели.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="⬅️ Назад в админку",
+            callback_data=AdminCallback(action="menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_broadcast_cancel_inline_keyboard() -> InlineKeyboardMarkup:
+    """
+    Кнопка отмены режима рассылки.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ Отмена рассылки",
+            callback_data=AdminCallback(action="menu").pack()
+        )
+    )
+    return builder.as_markup()

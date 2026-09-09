@@ -62,6 +62,15 @@ class TimetableParser:
         # Локальный кратковременный кэш конфигурации сайта в памяти
         self._site_data_cache: Optional[dict[str, Any]] = None
         self._site_data_cache_time: Optional[datetime] = None
+        # Горячий RAM-кэш готового расписания на день: (group_id, date_str) -> (data, timestamp)
+        self._ram_day_cache: dict[tuple[str, str], tuple[dict[str, Any], datetime]] = {}
+
+    def clear_ram_cache(self) -> None:
+        """Очищает оперативный кэш расписания в памяти."""
+        self._ram_day_cache.clear()
+        self._site_data_cache = None
+        self._site_data_cache_time = None
+        logger.info("Оперативный RAM-кэш расписания успешно очищен.")
 
     async def _fetch_site_data(self, session: aiohttp.ClientSession) -> dict[str, Any]:
         """
@@ -283,47 +292,68 @@ class TimetableParser:
         force_refresh: bool = False,
     ) -> dict[str, Any]:
         """
-        Получает расписание для указанной группы на целевой день:
-        1. Проверяет актуальный кэш в timetable_cache SQLite.
-        2. Если кэша нет, запрашивает сайт (HTML/API).
-        3. Сохраняет результат в SQLite кэш.
+        Получает расписание для указанной группы на целевой день с мгновенной отдачей:
+        1. Проверяет горячий RAM-кэш в памяти (0 мс).
+        2. Проверяет SQLite кэш (1 мс).
+        3. Если кэша нет, запрашивает API модели сайта напрямую (без медленных запросов к HTML).
+        4. Сохраняет результат в SQLite и RAM кэш.
         """
         if target_date is None:
             target_date = date.today()
 
         date_str = target_date.isoformat()
+        cache_key = (group_id, date_str)
 
-        # 1. Проверка SQLite кэша
+        # 1. Проверка оперативного RAM-кэша (0 мс)
+        if not force_refresh and cache_key in self._ram_day_cache:
+            cached_data, cached_time = self._ram_day_cache[cache_key]
+            # Время жизни RAM-кэша 1 час
+            if (datetime.now() - cached_time).total_seconds() < 3600:
+                logger.debug("Мгновенная отдача из RAM кэша: группа %s на %s", group_id, date_str)
+                return cached_data
+
+        # 2. Проверка SQLite кэша
         if not force_refresh:
             cached = await self.db.get_cached_timetable(group_id, date_str)
             if cached:
-                logger.debug("Расписание получено из кэша для группы %s на %s", group_id, date_str)
+                self._ram_day_cache[cache_key] = (cached, datetime.now())
+                logger.debug("Расписание получено из SQLite кэша: группа %s на %s", group_id, date_str)
                 return cached
 
-        # 2. Получение свежих данных с сайта
+        # 3. Получение данных с сайта: API-First (быстрый JSON без ожидания пустого HTML)
         logger.info("Запрос расписания с сайта для группы %s на %s ...", group_id, date_str)
         schedule_data: Optional[dict[str, Any]] = None
 
         async with aiohttp.ClientSession() as session:
-            # Сначала пробуем парсить HTML по group_url (по ТЗ)
-            if group_url:
-                schedule_data = await self._parse_schedule_from_html(session, group_url, target_date)
-
-            # Если HTML не дал данных, извлекаем из API модели сайта
-            if not schedule_data:
+            try:
+                # Первым делом запрашиваем API модели (быстро, структурированно, без задержек)
                 schedule_data = await self._parse_schedule_from_api(session, group_id, target_date)
+            except Exception as e:
+                logger.warning("Ошибка получения расписания из API для группы %s: %s", group_id, e)
 
-        # 3. Сохранение в SQLite кэш
-        if schedule_data:
-            await self.db.save_cached_timetable(group_id, date_str, schedule_data)
+            # Если API вернул пустые пары или упал, и есть group_url, пробуем HTML как fallback
+            if (not schedule_data or not schedule_data.get("lessons")) and group_url:
+                try:
+                    html_data = await self._parse_schedule_from_html(session, group_url, target_date)
+                    if html_data and html_data.get("lessons"):
+                        schedule_data = html_data
+                except Exception as e:
+                    logger.debug("HTML fallback не удался: %s", e)
 
-        return schedule_data or {
-            "date": date_str,
-            "day_name": DAY_NAMES_RU[target_date.weekday()],
-            "week_number": 1,
-            "is_even_week": False,
-            "lessons": [],
-        }
+        if not schedule_data:
+            schedule_data = {
+                "date": date_str,
+                "day_name": DAY_NAMES_RU[target_date.weekday()],
+                "week_number": 1,
+                "is_even_week": False,
+                "lessons": [],
+            }
+
+        # 4. Сохранение в SQLite кэш и оперативный RAM-кэш
+        await self.db.save_cached_timetable(group_id, date_str, schedule_data)
+        self._ram_day_cache[cache_key] = (schedule_data, datetime.now())
+
+        return schedule_data
 
     async def fetch_week_schedule(
         self,
@@ -334,6 +364,7 @@ class TimetableParser:
     ) -> list[dict[str, Any]]:
         """
         Получает расписание на всю учебную неделю (с понедельника по субботу).
+        Заранее прогревает и кэширует каждый день.
         """
         if start_date is None:
             start_date = date.today()
@@ -353,6 +384,42 @@ class TimetableParser:
             week_schedule.append(day_data)
 
         return week_schedule
+
+    async def preload_group_schedule(self, group_id: str, group_url: str = "", days_ahead: int = 7) -> None:
+        """
+        Фоновый прогрев расписания группы на ближайшие дни вперед (сегодня, завтра и неделя).
+        Позволяет отдавать расписание мгновенно без малейшей паузы для студента.
+        """
+        try:
+            today = date.today()
+            logger.info("Фоновый прогрев кэша для группы %s на %d дней...", group_id, days_ahead)
+            for offset in range(days_ahead):
+                target_date = today + timedelta(days=offset)
+                await self.fetch_day_schedule(
+                    group_id=group_id,
+                    group_url=group_url,
+                    target_date=target_date,
+                    force_refresh=False,
+                )
+            logger.info("Кэш группы %s успешно прогрет!", group_id)
+        except Exception as e:
+            logger.warning("Не удалось прогреть кэш для группы %s: %s", group_id, e)
+
+    async def preload_active_groups_schedules(self, database: Database) -> None:
+        """
+        Фоновый прогрев расписания для всех групп, на которые подписаны реальные пользователи.
+        """
+        try:
+            active_groups = await database.get_active_group_ids()
+            if not active_groups:
+                return
+            logger.info("Запуск фонового прогрева расписания для %d активных групп...", len(active_groups))
+            for group_id in active_groups:
+                await self.preload_group_schedule(group_id, days_ahead=4)
+                await asyncio.sleep(0.1)  # микропауза между группами
+            logger.info("Фоновый прогрев всех активных групп завершен!")
+        except Exception as e:
+            logger.warning("Ошибка фонового прогрева активных групп: %s", e)
 
 
 # -------------------------------------------------------------------------

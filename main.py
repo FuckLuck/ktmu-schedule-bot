@@ -12,6 +12,7 @@ from handlers import router
 from scheduler import setup_scheduler
 from structure_parser import sync_structure
 from throttling import ThrottlingMiddleware
+from timetable_parser import timetable_parser
 
 # Настройка структурированного логирования
 logging.basicConfig(
@@ -57,7 +58,10 @@ async def on_startup(bot: Bot) -> None:
     # 4. Если бот запущен днем, сразу планируем оставшиеся пары на сегодня
     asyncio.create_task(scheduler_service.schedule_today_pairs_notifications())
 
-    # 5. Автоматическая регистрация команд в меню Telegram
+    # 5. Фоновый прогрев расписания для всех активных групп (мгновенная отдача без ожидания)
+    asyncio.create_task(timetable_parser.preload_active_groups_schedules(db))
+
+    # 6. Автоматическая регистрация команд в меню Telegram
     from aiogram.types import BotCommand
     commands = [
         BotCommand(command="start", description="Главное меню и запуск"),
@@ -66,6 +70,7 @@ async def on_startup(bot: Bot) -> None:
         BotCommand(command="week", description="Расписание на неделю"),
         BotCommand(command="change_group", description="Сменить группу"),
         BotCommand(command="notifications", description="Настройка уведомлений"),
+        BotCommand(command="admin", description="Панель администратора (ID: 870396858)"),
         BotCommand(command="author", description="Связь с автором (@yapsychokid)"),
         BotCommand(command="help", description="Справка и помощь"),
     ]
