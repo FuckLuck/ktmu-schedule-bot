@@ -1,0 +1,21 @@
+# Environment variables and secrets
+.env
+
+# SQLite database
+*.db
+*.db-wal
+*.db-shm
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest cache and logs
+.pytest_cache/
+*.log
+
+# Virtual environment
+venv/
+.venv/
+env/
