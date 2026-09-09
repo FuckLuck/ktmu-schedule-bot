@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     DATABASE_PATH: str = "ktmu_bot.db"
     TIMEZONE: str = "Europe/Moscow"
     CACHE_TTL_HOURS: int = 6
+    THROTTLING_RATE_LIMIT: float = 0.8
 
     # Время стандартных пар КТМУ по умолчанию (если не пришли из API)
     DEFAULT_PERIOD_TIMES: list[str] = [

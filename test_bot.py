@@ -330,3 +330,95 @@ async def test_scheduler_07_00_pairs_creation(test_db):
         assert pair_jobs[0].kwargs["group_id"] == "grp_beta"
         assert pair_jobs[0].kwargs["group_name"] == "Бета-1"
 
+
+@pytest.mark.asyncio
+async def test_throttling_middleware_messages():
+    """Тест антиспам-системы для входящих сообщений (Message)."""
+    from throttling import ThrottlingMiddleware
+    from aiogram.types import Message, User
+
+    middleware = ThrottlingMiddleware(rate_limit=0.3)
+    handler = AsyncMock(return_value="OK")
+
+    user = User(id=123, is_bot=False, first_name="Тестер")
+    message = MagicMock(spec=Message)
+    message.from_user = user
+    message.answer = AsyncMock()
+
+    data = {"event_from_user": user}
+
+    # 1. Первый запрос проходит успешно
+    res1 = await middleware(handler, message, data)
+    assert res1 == "OK"
+    assert handler.call_count == 1
+    assert message.answer.call_count == 0
+
+    # 2. Быстрый второй запрос блокируется и отправляет предупреждение
+    res2 = await middleware(handler, message, data)
+    assert res2 is None
+    assert handler.call_count == 1  # хэндлер не вызывался повторно
+    assert message.answer.call_count == 1
+    assert "не спамьте" in message.answer.call_args[0][0]
+
+    # 3. Быстрый третий запрос блокируется молча (защита от циклического спама ботом)
+    res3 = await middleware(handler, message, data)
+    assert res3 is None
+    assert handler.call_count == 1
+    assert message.answer.call_count == 1  # новых предупреждений не отправлялось
+
+    # 4. Запрос после завершения кулдауна проходит штатно
+    await asyncio.sleep(0.35)
+    res4 = await middleware(handler, message, data)
+    assert res4 == "OK"
+    assert handler.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_throttling_middleware_callback_queries():
+    """Тест антиспам-системы для нажатий на кнопки (CallbackQuery)."""
+    from throttling import ThrottlingMiddleware
+    from aiogram.types import CallbackQuery, User
+
+    middleware = ThrottlingMiddleware(rate_limit=0.3)
+    handler = AsyncMock(return_value="OK")
+
+    user = User(id=456, is_bot=False, first_name="Тестер")
+    callback = MagicMock(spec=CallbackQuery)
+    callback.from_user = user
+    callback.answer = AsyncMock()
+
+    data = {"event_from_user": user}
+
+    # 1. Первое нажатие проходит
+    res1 = await middleware(handler, callback, data)
+    assert res1 == "OK"
+    assert handler.call_count == 1
+    assert callback.answer.call_count == 0
+
+    # 2. Быстрое повторное нажатие блокируется, всплывает мягкое уведомление
+    res2 = await middleware(handler, callback, data)
+    assert res2 is None
+    assert handler.call_count == 1
+    assert callback.answer.call_count == 1
+    assert "Слишком частые" in callback.answer.call_args[0][0]
+
+
+def test_throttling_stale_cleanup():
+    """Тест автоматической очистки устаревших записей троттлинга."""
+    from throttling import ThrottlingMiddleware
+
+    middleware = ThrottlingMiddleware(rate_limit=0.5, cleanup_threshold=2)
+    now = 1000.0
+    middleware._last_request_time = {
+        101: now - 700.0,  # старая запись (> 600 сек)
+        102: now - 50.0,   # свежая запись
+    }
+    middleware._user_warned = {101: True, 102: False}
+
+    middleware._cleanup_stale_records(now)
+
+    assert 101 not in middleware._last_request_time
+    assert 101 not in middleware._user_warned
+    assert 102 in middleware._last_request_time
+    assert 102 in middleware._user_warned
+

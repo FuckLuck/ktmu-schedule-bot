@@ -11,6 +11,7 @@ from database import db
 from handlers import router
 from scheduler import setup_scheduler
 from structure_parser import sync_structure
+from throttling import ThrottlingMiddleware
 
 # Настройка структурированного логирования
 logging.basicConfig(
@@ -110,6 +111,11 @@ async def main() -> None:
     # Инициализация диспетчера
     dp = Dispatcher()
     dp["database"] = db
+
+    # Подключение антиспам-системы (Throttling Middleware)
+    throttling = ThrottlingMiddleware(rate_limit=config.THROTTLING_RATE_LIMIT)
+    dp.message.outer_middleware(throttling)
+    dp.callback_query.outer_middleware(throttling)
 
     # Регистрация роутеров
     dp.include_router(router)
