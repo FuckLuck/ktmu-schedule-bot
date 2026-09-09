@@ -1,143 +1,133 @@
-# 🎓 Telegram-бот расписания колледжа КТМУ (timetable-ktmu.ru)
+# 🎓 Telegram-бот расписания колледжа КТМУ
 
-Высоконагруженный асинхронный Telegram-бот на Python (**aiogram 3.x**) для студентов колледжа КТМУ с поддержкой всех специальностей и учебных групп с сайта [timetable-ktmu.ru](https://timetable-ktmu.ru/).
+[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![aiogram](https://img.shields.io/badge/aiogram-3.x-2CA5E0?logo=telegram&logoColor=white)](https://github.com/aiogram/aiogram)
+[![SQLite](https://img.shields.io/badge/SQLite-aiosqlite-003B57?logo=sqlite&logoColor=white)](https://sqlite.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Author](https://img.shields.io/badge/Author-@yapsychokid-informational?logo=telegram&logoColor=white)](https://t.me/yapsychokid)
+
+Асинхронный Telegram-бот для студентов колледжа КТМУ с поддержкой **всех специальностей и групп** с сайта [timetable-ktmu.ru](https://timetable-ktmu.ru/).
 
 ---
 
-## 🚀 Возможности бота
+## ✨ Ключевые возможности
 
-- **Пошаговый выбор группы**: При первом запуске `/start` бот предлагает интуитивный диалог на Inline-кнопках:
-  1. Выбор специальности с пагинацией.
-  2. Выбор группы выбранной специальности.
-- **Быстрый доступ к расписанию**:
-  - `📅 На сегодня` — расписание текущего дня с аудиториями, преподавателями и форматом (очно/дистанционно).
-  - `📆 На завтра` — расписание следующего дня.
-  - `🗓 На неделю` — сводное расписание с понедельника по субботу с разделением на порции сообщений.
-  - `⚙️ Сменить группу` — мгновенная смена группы без потери настроек.
-- **Интеллектуальные уведомления через APScheduler**:
-  - **20:00 (Вечерняя рассылка на завтра)**: Бот группирует пользователей по `group_id`, делает **ровно 1 запрос расписания на группу** и рассылает расписание студентам.
-  - **07:00 (Утреннее планирование пар)**: Создает точечные задачи `DateTrigger` на отправку напоминания ровно за 0 минут до начала каждой пары текущего дня.
-  - **Обработка блокировки бота**: Перехват `TelegramForbiddenError` с автоматическим отключением флага `notifications_enabled` в SQLite.
-- **Многоуровневое кэширование**:
-  - Расписание кэшируется в таблице `timetable_cache` SQLite (с настраиваемым TTL).
-  - Повторные запросы студентов одной группы мгновенно отдаются из базы, снимая нагрузку с сайта колледжа.
-- **Гибридный парсер структуры (structure_parser)**:
-  - Парсит ссылки на специальности и группы через `BeautifulSoup4`.
-  - В случае клиентского SPA-рендеринга автоматически обращается к актуальному API хранилища сайта (`/api/storage/schedule-data-v2`), сопоставляя ФГОС СПО наименования и формируя ссылки вида `/specialty/.../year/.../group/...`.
+- 🚀 **Пошаговый выбор группы**: Интуитивный выбор специальности и группы на Inline-кнопках без лишних переходов.
+- 🔄 **Кнопки «Назад» везде**: Удобная навигация между группами, специальностями и главным меню.
+- 🕒 **Умное переключение расписания**:
+  - Если пары на сегодня уже закончились (например, время 16:00, а последняя пара завершилась в 15:30), бот **автоматически показывает расписание на завтра (на четверг)** с возможностью в 1 клик посмотреть прошедшие занятия за сегодня.
+- 🔔 **Интеллектуальные рассылки (APScheduler)**:
+  - **В 20:00 (вечер)**: рассылка расписания на завтра (1 запрос к сайту на группу).
+  - **В 08:00 (утро)**: утренняя рассылка расписания на сегодня.
+  - **В 07:00**: планирование точечных напоминаний ровно за 0 минут до начала каждой пары.
+  - **Автоматическая обработка блокировок**: при блокировке бота уведомления для пользователя корректно деактивируются (`TelegramForbiddenError`).
+- ⚡ **Многоуровневое кэширование**: Таблица `timetable_cache` SQLite снижает нагрузку на сайт колледжа.
+- 👨‍💻 **Кнопка связи с автором**: Прямой переход в диалог с разработчиком ([@yapsychokid](https://t.me/yapsychokid)) прямо из главного меню бота.
 
 ---
 
 ## 🛠 Технический стек
 
-- **Язык**: Python 3.11+
-- **Telegram фреймворк**: `aiogram 3.31+`
-- **Асинхронные HTTP-запросы**: `aiohttp 3.14+`
-- **Парсинг веб-страниц**: `BeautifulSoup4 4.15+`
-- **База данных**: SQLite через `aiosqlite 0.22+`
-- **Планировщик задач**: `APScheduler 3.11+`
-- **Валидация и настройки**: `pydantic 2.x`, `pydantic-settings`, `python-dotenv`
-- **Тестирование**: `pytest`, `pytest-asyncio`
+- **Python 3.12+**
+- **aiogram 3.31+** (асинхронный фреймворк Telegram Bot API)
+- **aiohttp** & **BeautifulSoup4** (гибридный парсер: HTML + JSON API хранилища)
+- **aiosqlite** (асинхронная база данных SQLite)
+- **APScheduler** (планировщик периодических задач и точечных напоминаний)
+- **pydantic-settings** (типизированная конфигурация)
+- **Docker** & **Docker Compose** (контейнеризация для быстрого продакшн-деплоя)
 
 ---
 
 ## 🗄 Структура базы данных (SQLite)
 
-### 1. `users` (Пользователи)
-| Поле | Тип | Описание |
-| :--- | :--- | :--- |
-| `user_id` | `INTEGER PRIMARY KEY` | Telegram ID пользователя |
-| `group_id` | `TEXT` | ID выбранной группы (например `6g5eqnp6`) |
-| `group_url` | `TEXT` | Полная ссылка на расписание группы |
-| `group_name` | `TEXT` | Читаемое название группы (например `1-ИС-10`, `КПД-1`) |
-| `notifications_enabled` | `BOOLEAN DEFAULT 1` | Флаг включения уведомлений (0/1) |
+```sql
+-- Пользователи
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY,
+    group_id TEXT,
+    group_url TEXT,
+    group_name TEXT,
+    notifications_enabled BOOLEAN DEFAULT 1
+);
 
-### 2. `groups` (Специальности и группы)
-| Поле | Тип | Описание |
-| :--- | :--- | :--- |
-| `id` | `TEXT PRIMARY KEY` | Уникальный ID группы |
-| `specialty_name` | `TEXT NOT NULL` | Название специальности |
-| `group_name` | `TEXT NOT NULL` | Название группы |
-| `relative_url` | `TEXT NOT NULL` | Относительный путь (`/specialty/.../year/.../group/...`) |
+-- Группы и специальности
+CREATE TABLE IF NOT EXISTS groups (
+    id TEXT PRIMARY KEY,
+    specialty_name TEXT NOT NULL,
+    group_name TEXT NOT NULL,
+    relative_url TEXT NOT NULL
+);
 
-### 3. `timetable_cache` (Кэш расписания)
-| Поле | Тип | Описание |
-| :--- | :--- | :--- |
-| `group_id` | `TEXT` | ID группы (составной PK) |
-| `date` | `TEXT` | Дата расписания в формате `YYYY-MM-DD` (составной PK) |
-| `data_json` | `TEXT NOT NULL` | JSON структурированного расписания |
-| `updated_at` | `TIMESTAMP` | Время последнего обновления кэша |
-
----
-
-## 📁 Структура проекта
-
-```
-ktmu/
-├── config.py              # Конфигурация приложения и чтение .env
-├── database.py            # Асинхронный слой SQLite (aiosqlite)
-├── structure_parser.py    # Синхронизация структуры групп и специальностей
-├── timetable_parser.py    # Парсер расписания, расчет учебных недель и кэш
-├── keyboards.py           # Inline- и Reply-клавиатуры
-├── handlers.py            # Хэндлеры команд и сообщений aiogram 3
-├── scheduler.py           # Планировщик APScheduler (рассылка в 20:00 и пары в 07:00)
-├── main.py                # Точка входа, запуск бота и диспетчера
-├── test_bot.py            # Модульные и интеграционные тесты (pytest)
-├── requirements.txt       # Зависимости проекта
-├── .env.example           # Шаблон переменных окружения
-└── README.md              # Документация проекта
+-- Кэш расписания
+CREATE TABLE IF NOT EXISTS timetable_cache (
+    group_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (group_id, date)
+);
 ```
 
 ---
 
-## ⚙️ Установка и запуск
+## 🚀 Быстрый запуск
 
-### 1. Клонирование и подготовка окружения
-```bash
-python -m venv venv
-# На Windows:
-.\venv\Scripts\activate
-# На Linux/macOS:
-source venv/bin/activate
+### Вариант 1: Локальный запуск
 
-pip install -r requirements.txt
-```
+1. **Клонируйте репозиторий:**
+   ```bash
+   git clone https://github.com/FuckLuck/ktmu-schedule-bot.git
+   cd ktmu-schedule-bot
+   ```
 
-### 2. Настройка переменных окружения
-Скопируйте файл `.env.example` в `.env`:
-```bash
-cp .env.example .env
-```
-Укажите ваш реальный токен бота от [@BotFather](https://t.me/BotFather):
-```env
-BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ_EXAMPLE
-BASE_URL=https://timetable-ktmu.ru
-DATABASE_PATH=ktmu_bot.db
-TIMEZONE=Europe/Moscow
-CACHE_TTL_HOURS=6
-```
+2. **Создайте виртуальное окружение и установите зависимости:**
+   ```bash
+   python -m venv venv
+   # Windows:
+   .\venv\Scripts\activate
+   # Linux/macOS:
+   source venv/bin/activate
 
-### 3. Запуск тестов
-```bash
-pytest test_bot.py -v
-```
+   pip install -r requirements.txt
+   ```
 
-### 4. Запуск бота
-```bash
-python main.py
-```
+3. **Настройте переменные окружения:**
+   Скопируйте шаблон `.env.example` в `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+   Укажите ваш токен от [@BotFather](https://t.me/BotFather):
+   ```env
+   BOT_TOKEN=ВАШ_ТОКЕН_БОТА
+   BASE_URL=https://timetable-ktmu.ru
+   DATABASE_PATH=ktmu_bot.db
+   TIMEZONE=Europe/Moscow
+   CACHE_TTL_HOURS=6
+   ```
 
-При старте бот автоматически:
-1. Проверит и создаст таблицы базы данных `ktmu_bot.db`.
-2. Синхронизирует все специальности и группы с сайта `https://timetable-ktmu.ru/`.
-3. Зарегистрирует список команд меню в Telegram.
-4. Запустит планировщик рассылок в 20:00 (вечер), 08:00 (утро) и 07:00 (напоминания о начале пар).
-5. Начнет слушать входящие сообщения Telegram.
+4. **Запустите тесты:**
+   ```bash
+   pytest test_bot.py -v
+   ```
+
+5. **Запустите бота:**
+   ```bash
+   python main.py
+   ```
 
 ---
 
-## 📋 Список команд для @BotFather (/setcommands)
+### Вариант 2: Запуск через Docker Compose
 
-Если вы хотите также зафиксировать команды вручную в [@BotFather](https://t.me/BotFather), отправьте команду `/setcommands`, выберите вашего бота и отправьте список:
+```bash
+docker compose up -d --build
+```
+
+---
+
+## 📋 Команды бота (@BotFather /setcommands)
+
+Команды автоматически регистрируются в Telegram при первом запуске, либо их можно настроить вручную через [@BotFather](https://t.me/BotFather):
 
 ```
 start - Главное меню и запуск
@@ -146,10 +136,20 @@ tomorrow - Расписание на завтра
 week - Расписание на неделю
 change_group - Сменить группу
 notifications - Настройка уведомлений
+author - Связь с автором (@yapsychokid)
 help - Справка и помощь
 ```
-*(При каждом запуске `python main.py` эти команды также регистрируются автоматически через Telegram Bot API).*
-#   k t m u - s c h e d u l e - b o t  
- #   k t m u - s c h e d u l e - b o t  
- #   k t m u - s c h e d u l e - b o t  
- 
+
+---
+
+## 👨‍💻 Автор и поддержка
+
+- Разработчик: **[@yapsychokid](https://t.me/yapsychokid)**
+- Репозиторий: [FuckLuck/ktmu-schedule-bot](https://github.com/FuckLuck/ktmu-schedule-bot)
+- По всем вопросам, баг-репортам и предложениям обращайтесь в Telegram: [@yapsychokid](https://t.me/yapsychokid)
+
+---
+
+## 📄 Лицензия
+
+Проект распространяется под свободной лицензией [MIT](LICENSE).

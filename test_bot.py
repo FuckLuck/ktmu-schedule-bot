@@ -227,6 +227,7 @@ def test_keyboards_builder():
     assert len(reply_kb.keyboard) == 3
     assert any("На сегодня" in btn.text for row in reply_kb.keyboard for btn in row)
     assert any("ВКЛ" in btn.text for row in reply_kb.keyboard for btn in row)
+    assert any("Связь с автором" in btn.text for row in reply_kb.keyboard for btn in row)
 
 
 @pytest.mark.asyncio

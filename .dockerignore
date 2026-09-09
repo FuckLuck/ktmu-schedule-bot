@@ -1,0 +1,14 @@
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.env
+ktmu_bot.db
+ktmu_bot.db-wal
+ktmu_bot.db-shm
+venv
+.venv
+tests

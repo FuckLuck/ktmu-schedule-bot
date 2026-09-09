@@ -178,6 +178,7 @@ def get_main_reply_keyboard(notifications_enabled: bool = True) -> ReplyKeyboard
     )
     builder.row(
         KeyboardButton(text=notif_text),
+        KeyboardButton(text="👨‍💻 Связь с автором"),
     )
 
     return builder.as_markup(resize_keyboard=True)

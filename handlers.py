@@ -486,6 +486,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 @router.message(Command("author"))
 @router.message(Command("contact"))
+@router.message(F.text == "👨‍💻 Связь с автором")
 async def cmd_author(message: Message):
     """
     Связь с автором / разработчиком бота.

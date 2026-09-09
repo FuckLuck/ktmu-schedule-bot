@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  ktmu-bot:
+    build: .
+    container_name: ktmu-schedule-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DATABASE_PATH=/app/data/ktmu_bot.db
+      - TIMEZONE=Europe/Moscow
