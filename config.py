@@ -18,11 +18,12 @@ class Settings(BaseSettings):
 
     BOT_TOKEN: str = "YOUR_TELEGRAM_BOT_TOKEN_HERE"
     BASE_URL: str = "https://timetable-ktmu.ru"
-    DATABASE_PATH: str = "ktmu_bot.db"
+    DATABASE_PATH: str = os.getenv("DATABASE_PATH", "data/bot_database.db")
     TIMEZONE: str = "Europe/Moscow"
     CACHE_TTL_HOURS: int = 6
     THROTTLING_RATE_LIMIT: float = 0.8
     ADMIN_IDS_RAW: str = "870396858"
+    WEBAPP_CAMPUS_URL: str = os.getenv("WEBAPP_CAMPUS_URL", "")
 
     @property
     def ADMIN_IDS(self) -> list[int]:
@@ -46,6 +47,7 @@ class Settings(BaseSettings):
         "14:00-15:30",
         "15:40-17:10",
         "17:20-18:50",
+        "19:00-20:30",
     ]
 
 

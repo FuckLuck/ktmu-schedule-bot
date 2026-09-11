@@ -1,10 +1,12 @@
-from typing import Any
+from datetime import date, timedelta
+from typing import Any, Optional
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
+    WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
@@ -43,6 +45,86 @@ class AdminCallback(CallbackData, prefix="adm"):
 
 class HelpCallback(CallbackData, prefix="hlp"):
     section: str  # "main", "student", "group", "commands"
+
+
+class TeacherChoiceCallback(CallbackData, prefix="tchc"):
+    action: str  # "fio", "subjects", "menu"
+
+
+class SubjectCallback(CallbackData, prefix="sbj"):
+    idx: int
+
+
+class LanguageCallback(CallbackData, prefix="lng"):
+    lang: str  # "ru", "en"
+
+
+class LeadTimeCallback(CallbackData, prefix="ldt"):
+    minutes: int  # 0, 5, 10, 15, 20, 30, 45
+
+
+class StarostaCallback(CallbackData, prefix="star"):
+    action: str  # "claim", "confirm_claim", "resign", "menu"
+
+
+class HomeworkCallback(CallbackData, prefix="hw"):
+    action: str  # "view", "add", "del_pick", "del", "cancel"
+    hw_id: int = 0
+
+
+class HwDateCallback(CallbackData, prefix="hwd"):
+    date_str: str
+
+
+class HwSubjectCallback(CallbackData, prefix="hwsbj"):
+    idx: int
+
+
+class AdminStarostaApproveCallback(CallbackData, prefix="stapp"):
+    action: str  # "approve", "reject", "rem_confirm", "rem_cancel"
+    req_id: int = 0
+    group_id: str
+    candidate_id: int
+
+
+class BellsCallback(CallbackData, prefix="bel"):
+    action: str  # "refresh", "menu"
+
+
+class GroupChatLinkCallback(CallbackData, prefix="gcl"):
+    action: str  # "set", "del", "menu"
+
+
+class CampusCallback(CallbackData, prefix="cmp"):
+    action: str  # "floor", "search", "menu"
+    floor: int = 1
+
+
+class MyTeacherCallback(CallbackData, prefix="myt"):
+    idx: int
+
+
+class ExamsCallback(CallbackData, prefix="exm"):
+    action: str  # "menu", "add", "del_pick", "del", "cancel"
+    exam_id: int = 0
+
+
+class NotesCallback(CallbackData, prefix="nts"):
+    action: str  # "menu", "add", "del_pick", "del", "cancel"
+    note_id: int = 0
+
+
+class NoteDateCallback(CallbackData, prefix="ntd"):
+    date_str: str
+
+
+class NotePairCallback(CallbackData, prefix="ntp"):
+    pair: int
+
+
+class NotificationSettingCallback(CallbackData, prefix="nset", sep="#"):
+    target: str  # "menu", "toggle", "evening_menu", "evening_set", "morning_menu", "morning_set", "lead_menu", "lead_set"
+    value: str = ""
 
 
 # -------------------------------------------------------------------------
@@ -84,23 +166,24 @@ def get_specialties_inline_keyboard(
 def get_groups_inline_keyboard(groups: list[dict[str, str]]) -> InlineKeyboardMarkup:
     """
     Шаг 2: Inline-клавиатура со списком групп выбранной специальности.
-    Располагает группы по 3 в ряд. Содержит кнопки «Назад к специальностям» и «В главное меню».
+    Располагает группы строго по 2 в ряд без лишних символов,
+    чтобы названия групп гарантированно не обрезались на смартфонах.
     """
     builder = InlineKeyboardBuilder()
 
     # Сортируем группы по названию
     sorted_groups = sorted(groups, key=lambda g: g.get("group_name", ""))
 
-    # Добавляем группы по 3 в ряд
+    # Добавляем группы по 2 в ряд (оптимально для ширины экрана смартфона)
     row: list[InlineKeyboardButton] = []
     for g in sorted_groups:
         row.append(
             InlineKeyboardButton(
-                text=f"🎓 {g['group_name']}",
+                text=g["group_name"],
                 callback_data=GroupCallback(action="pick", group_id=g["id"]).pack()
             )
         )
-        if len(row) == 3:
+        if len(row) == 2:
             builder.row(*row)
             row = []
     if row:
@@ -123,45 +206,106 @@ def get_groups_inline_keyboard(groups: list[dict[str, str]]) -> InlineKeyboardMa
     return builder.as_markup()
 
 
-def get_schedule_nav_keyboard(
-    current_date_str: str,
+RU_WEEKDAYS = {0: "Пн", 1: "Вт", 2: "Ср", 3: "Чт", 4: "Пт", 5: "Сб", 6: "Вс"}
+
+
+def get_schedule_bonch_keyboard(
+    target_date: date,
+    show_back_to_menu: bool = True,
     show_today_past: bool = False,
 ) -> InlineKeyboardMarkup:
     """
-    Инлайн-клавиатура для сообщений расписания:
-    - Переключение между сегодня и завтра
-    - Кнопка просмотра прошедшего расписания за сегодня (если пары уже кончились)
-    - Кнопка «Назад в главное меню»
+    Интерактивная BonchGo-сетка навигации под сообщением расписания:
+    Ряд 1: [ ⬅️ 11.09 Пт ]  [ 13.09 Вс ➡️ ]
+    Ряд 2: [ ⏪ 05.09 Сб ]  [ 19.09 Сб ⏩ ]
+    Ряд 3: [ 🖼 Картинка ]  [ 📆 Вся неделя ]
+    Ряд 4: [ 🏠 В главное меню ]
     """
     builder = InlineKeyboardBuilder()
 
+    prev_day = target_date - timedelta(days=1)
+    next_day = target_date + timedelta(days=1)
+    prev_week = target_date - timedelta(days=7)
+    next_week = target_date + timedelta(days=7)
+
+    # Ряд 1: Перелистывание на 1 день вперед/назад
+    btn_prev_day = f"⬅️ {prev_day.strftime('%d.%m')} {RU_WEEKDAYS[prev_day.weekday()]}"
+    btn_next_day = f"{next_day.strftime('%d.%m')} {RU_WEEKDAYS[next_day.weekday()]} ➡️"
+    builder.row(
+        InlineKeyboardButton(
+            text=btn_prev_day,
+            callback_data=ScheduleNavCallback(action="day_to", date_str=prev_day.isoformat()).pack()
+        ),
+        InlineKeyboardButton(
+            text=btn_next_day,
+            callback_data=ScheduleNavCallback(action="day_to", date_str=next_day.isoformat()).pack()
+        ),
+    )
+
+    # Ряд 2: Прыжок на неделю (-7 / +7 дней)
+    btn_prev_week = f"⏪ {prev_week.strftime('%d.%m')} {RU_WEEKDAYS[prev_week.weekday()]}"
+    btn_next_week = f"{next_week.strftime('%d.%m')} {RU_WEEKDAYS[next_week.weekday()]} ⏩"
+    builder.row(
+        InlineKeyboardButton(
+            text=btn_prev_week,
+            callback_data=ScheduleNavCallback(action="day_to", date_str=prev_week.isoformat()).pack()
+        ),
+        InlineKeyboardButton(
+            text=btn_next_week,
+            callback_data=ScheduleNavCallback(action="day_to", date_str=next_week.isoformat()).pack()
+        ),
+    )
+
+    # Ряд 3: Картинка и Вся неделя
+    builder.row(
+        InlineKeyboardButton(
+            text="🖼 Картинка",
+            callback_data=ScheduleNavCallback(action="image", date_str=target_date.isoformat()).pack()
+        ),
+        InlineKeyboardButton(
+            text="📆 Вся неделя",
+            callback_data=ScheduleNavCallback(action="week", date_str=target_date.isoformat()).pack()
+        ),
+    )
+
+    # Дополнительная кнопка прошедших пар (если запрошено)
     if show_today_past:
         builder.row(
             InlineKeyboardButton(
-                text="⏪ Показать прошедшее за сегодня",
-                callback_data=ScheduleNavCallback(action="today_past", date_str=current_date_str).pack()
+                text="Показать прошедшее за сегодня",
+                callback_data=ScheduleNavCallback(action="today_past", date_str=target_date.isoformat()).pack()
             )
         )
 
-    builder.row(
-        InlineKeyboardButton(
-            text="📆 На завтра",
-            callback_data=ScheduleNavCallback(action="tomorrow", date_str=current_date_str).pack()
-        ),
-        InlineKeyboardButton(
-            text="🗓 На неделю",
-            callback_data=ScheduleNavCallback(action="week", date_str=current_date_str).pack()
-        ),
-    )
-
-    builder.row(
-        InlineKeyboardButton(
-            text="⬅️ Назад в меню",
-            callback_data=NavigationCallback(to="main_menu").pack()
+    # Ряд 4: Кнопка возврата в меню
+    if show_back_to_menu:
+        builder.row(
+            InlineKeyboardButton(
+                text="Назад в меню",
+                callback_data=NavigationCallback(to="main_menu").pack()
+            )
         )
-    )
 
     return builder.as_markup()
+
+
+def get_schedule_nav_keyboard(
+    current_date_str: str,
+    show_today_past: bool = False,
+    show_back_to_menu: bool = True,
+) -> InlineKeyboardMarkup:
+    """
+    Совместимая функция навигации по расписанию, возвращающая BonchGo-раскладку.
+    """
+    try:
+        cur_dt = date.fromisoformat(current_date_str)
+    except Exception:
+        cur_dt = date.today()
+    return get_schedule_bonch_keyboard(
+        target_date=cur_dt,
+        show_back_to_menu=show_back_to_menu,
+        show_today_past=show_today_past
+    )
 
 
 def get_help_inline_keyboard(
@@ -233,39 +377,520 @@ def get_help_inline_keyboard(
 # Главное меню (ReplyKeyboard)
 # -------------------------------------------------------------------------
 
+def get_language_inline_keyboard() -> InlineKeyboardMarkup:
+    """
+    Клавиатура выбора языка (Русский / English) в стиле Bonch Bot.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="🇷🇺 Русский",
+            callback_data=LanguageCallback(lang="ru").pack()
+        ),
+        InlineKeyboardButton(
+            text="🇬🇧 English",
+            callback_data=LanguageCallback(lang="en").pack()
+        ),
+    )
+    return builder.as_markup()
+
+
+def get_notification_lead_time_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
+    """
+    Клавиатура настройки времени уведомлений перед занятиями (Bonch Bot style).
+    - За 5 минут / За 10 минут
+    - За 15 минут / За 20 минут
+    - За 30 минут / За 45 минут
+    - Не нужно
+    """
+    builder = InlineKeyboardBuilder()
+    if lang == "en":
+        builder.row(
+            InlineKeyboardButton(text="⏱ 5 min before", callback_data=LeadTimeCallback(minutes=5).pack()),
+            InlineKeyboardButton(text="⏱ 10 min before", callback_data=LeadTimeCallback(minutes=10).pack()),
+        )
+        builder.row(
+            InlineKeyboardButton(text="⏱ 15 min before", callback_data=LeadTimeCallback(minutes=15).pack()),
+            InlineKeyboardButton(text="⏱ 20 min before", callback_data=LeadTimeCallback(minutes=20).pack()),
+        )
+        builder.row(
+            InlineKeyboardButton(text="⏱ 30 min before", callback_data=LeadTimeCallback(minutes=30).pack()),
+            InlineKeyboardButton(text="⏱ 45 min before", callback_data=LeadTimeCallback(minutes=45).pack()),
+        )
+        builder.row(
+            InlineKeyboardButton(text="❌ Not needed", callback_data=LeadTimeCallback(minutes=0).pack()),
+        )
+    else:
+        builder.row(
+            InlineKeyboardButton(text="⏱ За 5 минут", callback_data=LeadTimeCallback(minutes=5).pack()),
+            InlineKeyboardButton(text="⏱ За 10 минут", callback_data=LeadTimeCallback(minutes=10).pack()),
+        )
+        builder.row(
+            InlineKeyboardButton(text="⏱ За 15 минут", callback_data=LeadTimeCallback(minutes=15).pack()),
+            InlineKeyboardButton(text="⏱ За 20 минут", callback_data=LeadTimeCallback(minutes=20).pack()),
+        )
+        builder.row(
+            InlineKeyboardButton(text="⏱ За 30 минут", callback_data=LeadTimeCallback(minutes=30).pack()),
+            InlineKeyboardButton(text="⏱ За 45 минут", callback_data=LeadTimeCallback(minutes=45).pack()),
+        )
+        builder.row(
+            InlineKeyboardButton(text="❌ Не нужно", callback_data=LeadTimeCallback(minutes=0).pack()),
+        )
+    return builder.as_markup()
+
+
 def get_main_reply_keyboard(
-    notifications_enabled: bool = True, is_admin: bool = False
+    notifications_enabled: bool = True, is_admin: bool = False, lang: str = "ru"
 ) -> ReplyKeyboardMarkup:
     """
-    Основное меню бота с кнопками быстрого доступа к расписанию и настройкам.
-    Для администраторов автоматически добавляется кнопка входа в админ-панель.
+    Основное меню бота с кнопками быстрого доступа к расписанию и настройкам:
+    - Сегодня / Завтра
+    - Вся неделя / Звонки
+    - Выделенный пункт: 🎓 Меню группы (ДЗ / Староста)
+    - Поиск преподавателя / Корпуса и кабинеты
+    - Уведомления / Настройки и связь
     """
     builder = ReplyKeyboardBuilder()
 
     notif_text = "🔔 Уведомления: ВКЛ" if notifications_enabled else "🔕 Уведомления: ВЫКЛ"
+    if lang == "en":
+        notif_text = "🔔 Notifs: ON" if notifications_enabled else "🔕 Notifs: OFF"
 
+    # Ряд 1: Расписание сегодня / завтра
     builder.row(
-        KeyboardButton(text="📅 На сегодня"),
-        KeyboardButton(text="📆 На завтра"),
+        KeyboardButton(text="📅 На сегодня" if lang == "ru" else "📅 Today"),
+        KeyboardButton(text="📆 На завтра" if lang == "ru" else "🌅 Tomorrow"),
     )
+    # Ряд 2: На неделю / Звонки
     builder.row(
-        KeyboardButton(text="🗓 На неделю"),
-        KeyboardButton(text="⚙️ Сменить группу"),
+        KeyboardButton(text="🗓 На неделю" if lang == "ru" else "📆 Full Week"),
+        KeyboardButton(text="⏰ Звонки" if lang == "ru" else "⏰ Bells"),
     )
+    # Ряд 3: Меню группы (ДЗ, Чат, Заметки, Староста, Смена группы)
+    builder.row(
+        KeyboardButton(text="🎓 Меню группы (ДЗ / Староста)" if lang == "ru" else "🎓 Group menu (HW / Starosta)")
+    )
+    # Ряд 4: Поиск преподавателя
+    builder.row(
+        KeyboardButton(text="🔍 Поиск преподавателя" if lang == "ru" else "🔍 Teacher search"),
+    )
+    # Ряд 5: Уведомления и подменю настроек/связи
     builder.row(
         KeyboardButton(text=notif_text),
-        KeyboardButton(text="📖 Инструкция"),
-    )
-    builder.row(
-        KeyboardButton(text="👨‍💻 Связь с автором"),
+        KeyboardButton(text="⚙️ Настройки и связь" if lang == "ru" else "⚙️ Settings & info"),
     )
 
     if is_admin:
         builder.row(
-            KeyboardButton(text="👑 Админ-панель")
+            KeyboardButton(text="👑 Админ-панель" if lang == "ru" else "👑 Admin Panel")
         )
 
     return builder.as_markup(resize_keyboard=True)
+
+
+def get_settings_info_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
+    """
+    Клавиатура подменю настроек, информации о боте и связи:
+    - 🌐 Язык | ℹ️ Бот в группу
+    - 👨‍💻 Связь с автором | 📖 Инструкция
+    - ⬅️ Главное меню
+    """
+    builder = ReplyKeyboardBuilder()
+    builder.row(
+        KeyboardButton(text="🌐 Язык" if lang == "ru" else "🌐 Language"),
+        KeyboardButton(text="ℹ️ Бот в группу" if lang == "ru" else "➕ Bot to group"),
+    )
+    builder.row(
+        KeyboardButton(text="👨‍💻 Связь с автором" if lang == "ru" else "👨‍💻 Contact author"),
+        KeyboardButton(text="📖 Инструкция" if lang == "ru" else "📖 Guide"),
+    )
+    builder.row(
+        KeyboardButton(text="⬅️ Главное меню" if lang == "ru" else "⬅️ Main menu")
+    )
+    return builder.as_markup(resize_keyboard=True)
+
+
+def get_group_menu_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
+    """
+    Клавиатура для меню группы:
+    - 📚 ДЗ 📚
+    - 💬 Чат группы | 📝 Личные заметки
+    - 🙋‍♂️ Староста 🙋‍♂️ | ⚙️ Сменить группу
+    - ⬅️ Главное меню
+    """
+    builder = ReplyKeyboardBuilder()
+    builder.row(
+        KeyboardButton(text="📚 ДЗ 📚" if lang == "ru" else "📚 Homework 📚")
+    )
+    builder.row(
+        KeyboardButton(text="💬 Чат группы" if lang == "ru" else "💬 Group chat"),
+        KeyboardButton(text="📝 Личные заметки" if lang == "ru" else "📝 Personal notes"),
+    )
+    builder.row(
+        KeyboardButton(text="🙋‍♂️ Староста 🙋‍♂️" if lang == "ru" else "🙋‍♂️ Starosta 🙋‍♂️"),
+        KeyboardButton(text="⚙️ Сменить группу" if lang == "ru" else "⚙️ Change group"),
+    )
+    builder.row(
+        KeyboardButton(text="⬅️ Главное меню" if lang == "ru" else "⬅️ Main menu")
+    )
+    return builder.as_markup(resize_keyboard=True)
+
+
+def get_starosta_inline_keyboard(
+    is_current_user: bool,
+    has_starosta: bool,
+    has_deputy: bool = False,
+    is_deputy: bool = False,
+    lang: str = "ru",
+) -> InlineKeyboardMarkup:
+    """
+    Инлайн-клавиатура меню старосты:
+    - Если старосты нет: кнопка подачи заявки на старосту («🙋‍♂️ Подать заявку на старосту 🙋‍♂️»)
+    - Если пользователь староста: «✏️ Добавить ДЗ», «🗑 Удалить ДЗ», назначение/снятие зама, запрос на снятие
+    - Если пользователь зам: «✏️ Добавить ДЗ», «🗑 Удалить ДЗ»
+    - Если другой студент: возврат в главное меню
+    """
+    builder = InlineKeyboardBuilder()
+
+    if not has_starosta:
+        builder.row(
+            InlineKeyboardButton(
+                text="🙋‍♂️ Подать заявку на старосту 🙋‍♂️" if lang == "ru" else "🙋‍♂️ Apply for Starosta 🙋‍♂️",
+                callback_data=StarostaCallback(action="claim").pack()
+            )
+        )
+    elif is_current_user:
+        builder.row(
+            InlineKeyboardButton(
+                text="✏️ Добавить ДЗ" if lang == "ru" else "✏️ Add Homework",
+                callback_data=HomeworkCallback(action="add").pack()
+            ),
+            InlineKeyboardButton(
+                text="🗑 Удалить ДЗ" if lang == "ru" else "🗑 Delete Homework",
+                callback_data=HomeworkCallback(action="del_pick").pack()
+            ),
+        )
+        if not has_deputy:
+            builder.row(
+                InlineKeyboardButton(
+                    text="➕ Назначить заместителя" if lang == "ru" else "➕ Appoint Deputy",
+                    callback_data=StarostaCallback(action="add_deputy").pack()
+                )
+            )
+        else:
+            builder.row(
+                InlineKeyboardButton(
+                    text="❌ Снять заместителя" if lang == "ru" else "❌ Remove Deputy",
+                    callback_data=StarostaCallback(action="remove_deputy").pack()
+                )
+            )
+        builder.row(
+            InlineKeyboardButton(
+                text="📨 Запрос на снятие старосты" if lang == "ru" else "📨 Request resignation",
+                callback_data=StarostaCallback(action="resign").pack()
+            )
+        )
+    elif is_deputy:
+        builder.row(
+            InlineKeyboardButton(
+                text="✏️ Добавить ДЗ" if lang == "ru" else "✏️ Add Homework",
+                callback_data=HomeworkCallback(action="add").pack()
+            ),
+            InlineKeyboardButton(
+                text="🗑 Удалить ДЗ" if lang == "ru" else "🗑 Delete Homework",
+                callback_data=HomeworkCallback(action="del_pick").pack()
+            ),
+        )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="🏠 В главное меню" if lang == "ru" else "🏠 Main menu",
+            callback_data=NavigationCallback(to="main_menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_admin_starosta_decision_keyboard(
+    req_id: int, group_id: str, candidate_id: int
+) -> InlineKeyboardMarkup:
+    """
+    Клавиатура для администратора бота для одобрения или отклонения заявки на старосту.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="✅ Одобрить",
+            callback_data=AdminStarostaApproveCallback(
+                action="approve", req_id=req_id, group_id=group_id, candidate_id=candidate_id
+            ).pack(),
+        ),
+        InlineKeyboardButton(
+            text="❌ Отклонить",
+            callback_data=AdminStarostaApproveCallback(
+                action="reject", req_id=req_id, group_id=group_id, candidate_id=candidate_id
+            ).pack(),
+        ),
+    )
+    return builder.as_markup()
+
+
+def get_admin_starosta_remove_keyboard(
+    group_id: str, starosta_id: int
+) -> InlineKeyboardMarkup:
+    """
+    Клавиатура подтверждения снятия старосты администратором.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="🗑 Снять старосту",
+            callback_data=AdminStarostaApproveCallback(
+                action="rem_confirm", req_id=0, group_id=group_id, candidate_id=starosta_id
+            ).pack(),
+        ),
+        InlineKeyboardButton(
+            text="❌ Отмена",
+            callback_data=AdminStarostaApproveCallback(
+                action="rem_cancel", req_id=0, group_id=group_id, candidate_id=starosta_id
+            ).pack(),
+        ),
+    )
+    return builder.as_markup()
+
+
+def get_homework_list_keyboard(
+    homework_list: list[dict[str, Any]], is_starosta: bool = False, lang: str = "ru"
+) -> InlineKeyboardMarkup:
+    """
+    Инлайн-клавиатура просмотра домашних заданий.
+    Если пользователь староста — добавляются кнопки создания/удаления ДЗ.
+    """
+    builder = InlineKeyboardBuilder()
+
+    if is_starosta:
+        builder.row(
+            InlineKeyboardButton(
+                text="✏️ Добавить ДЗ" if lang == "ru" else "✏️ Add Homework",
+                callback_data=HomeworkCallback(action="add").pack()
+            ),
+        )
+        if homework_list:
+            builder.row(
+                InlineKeyboardButton(
+                    text="🗑 Удалить ДЗ" if lang == "ru" else "🗑 Delete Homework",
+                    callback_data=HomeworkCallback(action="del_pick").pack()
+                )
+            )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="🏠 В главное меню" if lang == "ru" else "🏠 Main menu",
+            callback_data=NavigationCallback(to="main_menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_homework_delete_keyboard(
+    homework_list: list[dict[str, Any]], lang: str = "ru"
+) -> InlineKeyboardMarkup:
+    """
+    Инлайн-клавиатура со списком заданий для удаления старостой.
+    """
+    builder = InlineKeyboardBuilder()
+
+    for hw in homework_list:
+        subj = hw.get("subject", "")
+        due = hw.get("due_date", "")
+        short_subj = subj if len(subj) <= 15 else subj[:13] + ".."
+        btn_text = f"🗑 {short_subj} ({due})"
+        builder.row(
+            InlineKeyboardButton(
+                text=btn_text,
+                callback_data=HomeworkCallback(action="del", hw_id=hw["id"]).pack()
+            )
+        )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ Отмена" if lang == "ru" else "❌ Cancel",
+            callback_data=HomeworkCallback(action="cancel").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_homework_date_suggestions_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
+    """
+    Клавиатура с быстрыми вариантами срока сдачи ДЗ (Завтра, Послезавтра, След. понедельник).
+    """
+    builder = InlineKeyboardBuilder()
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+    day_after = today + timedelta(days=2)
+
+    # Следующий понедельник
+    days_ahead = 7 - today.weekday() if today.weekday() != 0 else 7
+    next_monday = today + timedelta(days=days_ahead)
+
+    tomorrow_label = f"Завтра ({tomorrow.strftime('%d.%m')})" if lang == "ru" else f"Tomorrow ({tomorrow.strftime('%d.%m')})"
+    day_after_label = f"Послезавтра ({day_after.strftime('%d.%m')})" if lang == "ru" else f"In 2 days ({day_after.strftime('%d.%m')})"
+    mon_label = f"След. Пн ({next_monday.strftime('%d.%m')})" if lang == "ru" else f"Next Mon ({next_monday.strftime('%d.%m')})"
+
+    builder.row(
+        InlineKeyboardButton(
+            text=tomorrow_label,
+            callback_data=HwDateCallback(date_str=tomorrow.strftime("%d.%m.%Y")).pack()
+        ),
+        InlineKeyboardButton(
+            text=day_after_label,
+            callback_data=HwDateCallback(date_str=day_after.strftime("%d.%m.%Y")).pack()
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=mon_label,
+            callback_data=HwDateCallback(date_str=next_monday.strftime("%d.%m.%Y")).pack()
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ Отмена" if lang == "ru" else "❌ Cancel",
+            callback_data=HomeworkCallback(action="cancel").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_homework_subjects_inline_keyboard(subjects: list[str], lang: str = "ru") -> InlineKeyboardMarkup:
+    """
+    Клавиатура со списком предметов группы для быстрого выбора при добавлении ДЗ.
+    """
+    builder = InlineKeyboardBuilder()
+    row: list[InlineKeyboardButton] = []
+    for idx, subj in enumerate(subjects):
+        display_name = subj if len(subj) <= 22 else subj[:20] + ".."
+        row.append(
+            InlineKeyboardButton(
+                text=f"📖 {display_name}",
+                callback_data=HwSubjectCallback(idx=idx).pack()
+            )
+        )
+        if len(row) == 2:
+            builder.row(*row)
+            row = []
+    if row:
+        builder.row(*row)
+
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ Отмена" if lang == "ru" else "❌ Cancel",
+            callback_data=HomeworkCallback(action="cancel").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_teacher_cancel_keyboard() -> InlineKeyboardMarkup:
+    """
+    Клавиатура отмены ввода при поиске преподавателя.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ Отмена поиска",
+            callback_data=NavigationCallback(to="main_menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_teacher_search_choice_keyboard() -> InlineKeyboardMarkup:
+    """
+    Клавиатура выбора способа поиска: по ФИО преподавателя или по предмету своей группы.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="🔍 Поиск по ФИО преподавателя",
+            callback_data=TeacherChoiceCallback(action="fio").pack()
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="📖 Преподаватели моей группы (по предметам)",
+            callback_data=TeacherChoiceCallback(action="subjects").pack()
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ Отмена",
+            callback_data=NavigationCallback(to="main_menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_group_subjects_inline_keyboard(subjects: list[str]) -> InlineKeyboardMarkup:
+    """
+    Клавиатура со списком предметов группы по 2 в ряд.
+    """
+    builder = InlineKeyboardBuilder()
+    row: list[InlineKeyboardButton] = []
+    for idx, subj in enumerate(subjects):
+        display_name = subj if len(subj) <= 22 else subj[:20] + ".."
+        row.append(
+            InlineKeyboardButton(
+                text=f"📖 {display_name}",
+                callback_data=SubjectCallback(idx=idx).pack()
+            )
+        )
+        if len(row) == 2:
+            builder.row(*row)
+            row = []
+    if row:
+        builder.row(*row)
+
+    builder.row(
+        InlineKeyboardButton(
+            text="⬅️ Назад к выбору поиска",
+            callback_data=TeacherChoiceCallback(action="menu").pack()
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="🏠 В главное меню",
+            callback_data=NavigationCallback(to="main_menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_add_to_group_keyboard(bot_username: str) -> InlineKeyboardMarkup:
+    """
+    Клавиатура со ссылкой для быстрого добавления бота в группу/беседу в 1 клик.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="➕ Добавить бота в беседу / группу",
+            url=f"https://t.me/{bot_username}?startgroup=true"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="💬 Связь с автором (@yapsychokid)",
+            url="https://t.me/yapsychokid"
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="🏠 В главное меню",
+            callback_data=NavigationCallback(to="main_menu").pack()
+        )
+    )
+    return builder.as_markup()
 
 
 # -------------------------------------------------------------------------
@@ -341,6 +966,418 @@ def get_broadcast_cancel_inline_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(
             text="❌ Отмена рассылки",
             callback_data=AdminCallback(action="menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+# -------------------------------------------------------------------------
+# ЗВОНКИ, ЧАТ ГРУППЫ, НАВИГАТОР, ПРЕПОДАВАТЕЛИ, СЕССИЯ, ЗАМЕТКИ, РЕГУЛИРОВКА
+# -------------------------------------------------------------------------
+
+BELLS_TIMETABLE: list[dict[str, Any]] = [
+    {"pair": 1, "start": "08:30", "end": "10:00", "break_min": 10},
+    {"pair": 2, "start": "10:10", "end": "11:40", "break_min": 10},
+    {"pair": 3, "start": "11:50", "end": "13:20", "break_min": 40, "is_big_break": True},
+    {"pair": 4, "start": "14:00", "end": "15:30", "break_min": 10},
+    {"pair": 5, "start": "15:40", "end": "17:10", "break_min": 10},
+    {"pair": 6, "start": "17:20", "end": "18:50", "break_min": 10},
+    {"pair": 7, "start": "19:00", "end": "20:30", "break_min": 0},
+]
+
+
+def get_bells_inline_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
+    """Клавиатура карточки расписания звонков."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="🔄 Обновить статус" if lang == "ru" else "🔄 Refresh status",
+            callback_data=BellsCallback(action="refresh").pack()
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="🏠 В главное меню" if lang == "ru" else "🏠 Main menu",
+            callback_data=NavigationCallback(to="main_menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_group_chat_link_keyboard(
+    chat_link: Optional[str] = None, is_starosta: bool = False, lang: str = "ru"
+) -> InlineKeyboardMarkup:
+    """Клавиатура ссылки на официальную беседу группы."""
+    builder = InlineKeyboardBuilder()
+    if chat_link:
+        builder.row(
+            InlineKeyboardButton(
+                text="🚀 Перейти в беседу группы" if lang == "ru" else "🚀 Open group chat",
+                url=chat_link
+            )
+        )
+    if is_starosta:
+        btn_label = "✏️ Изменить ссылку" if chat_link else "✏️ Указать ссылку на чат"
+        if lang == "en":
+            btn_label = "✏️ Edit chat link" if chat_link else "✏️ Set chat link"
+        builder.row(
+            InlineKeyboardButton(
+                text=btn_label,
+                callback_data=GroupChatLinkCallback(action="set").pack()
+            )
+        )
+        if chat_link:
+            builder.row(
+                InlineKeyboardButton(
+                    text="🗑 Удалить ссылку" if lang == "ru" else "🗑 Remove link",
+                    callback_data=GroupChatLinkCallback(action="del").pack()
+                )
+            )
+    builder.row(
+        InlineKeyboardButton(
+            text="🏠 В главное меню" if lang == "ru" else "🏠 Main menu",
+            callback_data=NavigationCallback(to="main_menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_campus_inline_keyboard(
+    current_floor: int = 1, lang: str = "ru", webapp_url: Optional[str] = None
+) -> InlineKeyboardMarkup:
+    """Клавиатура справочника-навигатора по корпусу колледжа."""
+    builder = InlineKeyboardBuilder()
+    floor_btns: list[InlineKeyboardButton] = []
+    for f in range(1, 5):
+        label = f"• {f} этаж •" if f == current_floor else f"{f} этаж"
+        if lang == "en":
+            label = f"• Floor {f} •" if f == current_floor else f"Floor {f}"
+        floor_btns.append(
+            InlineKeyboardButton(
+                text=label,
+                callback_data=CampusCallback(action="floor", floor=f).pack()
+            )
+        )
+    builder.row(*floor_btns[:2])
+    builder.row(*floor_btns[2:])
+    builder.row(
+        InlineKeyboardButton(
+            text="🔍 Найти аудиторию / кабинет" if lang == "ru" else "🔍 Find classroom / room",
+            callback_data=CampusCallback(action="search", floor=current_floor).pack()
+        )
+    )
+    if webapp_url:
+        builder.row(
+            InlineKeyboardButton(
+                text="🗺 Открыть карту колледжа (Mini App)" if lang == "ru" else "🗺 Open Map (Mini App)",
+                web_app=WebAppInfo(url=webapp_url)
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text="🏠 В главное меню" if lang == "ru" else "🏠 Main menu",
+            callback_data=NavigationCallback(to="main_menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_my_teachers_keyboard(teachers: list[dict[str, Any]], lang: str = "ru") -> InlineKeyboardMarkup:
+    """Клавиатура со списком преподавателей группы для быстрого просмотра их расписания."""
+    builder = InlineKeyboardBuilder()
+    for idx, t in enumerate(teachers):
+        name = t.get("name", "Преподаватель")
+        display_name = name if len(name) <= 24 else name[:22] + ".."
+        builder.row(
+            InlineKeyboardButton(
+                text=f"👨‍🏫 {display_name}",
+                callback_data=MyTeacherCallback(idx=idx).pack()
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text="🏠 В главное меню" if lang == "ru" else "🏠 Main menu",
+            callback_data=NavigationCallback(to="main_menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_exams_list_keyboard(
+    exams: list[dict[str, Any]], is_starosta: bool = False, lang: str = "ru"
+) -> InlineKeyboardMarkup:
+    """Клавиатура просмотра сессии и экзаменов."""
+    builder = InlineKeyboardBuilder()
+    if is_starosta:
+        builder.row(
+            InlineKeyboardButton(
+                text="➕ Добавить экзамен / зачет" if lang == "ru" else "➕ Add exam / test",
+                callback_data=ExamsCallback(action="add").pack()
+            )
+        )
+        if exams:
+            builder.row(
+                InlineKeyboardButton(
+                    text="🗑 Удалить экзамен" if lang == "ru" else "🗑 Delete exam",
+                    callback_data=ExamsCallback(action="del_pick").pack()
+                )
+            )
+    builder.row(
+        InlineKeyboardButton(
+            text="🏠 В главное меню" if lang == "ru" else "🏠 Main menu",
+            callback_data=NavigationCallback(to="main_menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_exams_delete_keyboard(exams: list[dict[str, Any]], lang: str = "ru") -> InlineKeyboardMarkup:
+    """Клавиатура со списком экзаменов для удаления."""
+    builder = InlineKeyboardBuilder()
+    for ex in exams:
+        subj = ex.get("subject", "")
+        dt = ex.get("exam_date", "")
+        short_subj = subj if len(subj) <= 16 else subj[:14] + ".."
+        btn_text = f"🗑 {short_subj} ({dt})"
+        builder.row(
+            InlineKeyboardButton(
+                text=btn_text,
+                callback_data=ExamsCallback(action="del", exam_id=ex["id"]).pack()
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ Отмена" if lang == "ru" else "❌ Cancel",
+            callback_data=ExamsCallback(action="cancel").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_user_notes_keyboard(notes: list[dict[str, Any]], lang: str = "ru") -> InlineKeyboardMarkup:
+    """Клавиатура персонального блокнота заметок и дедлайнов."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="➕ Добавить заметку" if lang == "ru" else "➕ Add note",
+            callback_data=NotesCallback(action="add").pack()
+        )
+    )
+    if notes:
+        builder.row(
+            InlineKeyboardButton(
+                text="🗑 Удалить заметку" if lang == "ru" else "🗑 Delete note",
+                callback_data=NotesCallback(action="del_pick").pack()
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text="🏠 В главное меню" if lang == "ru" else "🏠 Main menu",
+            callback_data=NavigationCallback(to="main_menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_user_notes_delete_keyboard(notes: list[dict[str, Any]], lang: str = "ru") -> InlineKeyboardMarkup:
+    """Клавиатура со списком заметок для удаления."""
+    builder = InlineKeyboardBuilder()
+    for nt in notes:
+        text = nt.get("note_text", "").strip().replace("\n", " ")
+        short_text = text if len(text) <= 22 else text[:20] + ".."
+        btn_text = f"🗑 {short_text}"
+        builder.row(
+            InlineKeyboardButton(
+                text=btn_text,
+                callback_data=NotesCallback(action="del", note_id=nt["id"]).pack()
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ Отмена" if lang == "ru" else "❌ Cancel",
+            callback_data=NotesCallback(action="cancel").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_note_date_quick_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
+    """Быстрый выбор даты дедлайна для заметки (Сегодня, Завтра, Послезавтра или без даты)."""
+    from datetime import date, timedelta
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+    day_after = today + timedelta(days=2)
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=f"📅 Сегодня ({today.strftime('%d.%m')})" if lang == "ru" else f"📅 Today ({today.strftime('%d.%m')})",
+            callback_data=NoteDateCallback(date_str=today.isoformat()).pack(),
+        ),
+        InlineKeyboardButton(
+            text=f"📆 Завтра ({tomorrow.strftime('%d.%m')})" if lang == "ru" else f"📆 Tomorrow ({tomorrow.strftime('%d.%m')})",
+            callback_data=NoteDateCallback(date_str=tomorrow.isoformat()).pack(),
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=f"🗓 Послезавтра ({day_after.strftime('%d.%m')})" if lang == "ru" else f"🗓 In 2 days ({day_after.strftime('%d.%m')})",
+            callback_data=NoteDateCallback(date_str=day_after.isoformat()).pack(),
+        ),
+        InlineKeyboardButton(
+            text="⏭ Без даты" if lang == "ru" else "⏭ No date",
+            callback_data=NoteDateCallback(date_str="none").pack(),
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ Отмена" if lang == "ru" else "❌ Cancel",
+            callback_data=NotesCallback(action="cancel").pack(),
+        )
+    )
+    return builder.as_markup()
+
+
+def get_note_pair_quick_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
+    """Выбор пары для дедлайна заметки (1-7 пара, к началу дня или без пары)."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="1 пара (08:30)", callback_data=NotePairCallback(pair=1).pack()),
+        InlineKeyboardButton(text="2 пара (10:10)", callback_data=NotePairCallback(pair=2).pack()),
+        InlineKeyboardButton(text="3 пара (11:50)", callback_data=NotePairCallback(pair=3).pack()),
+    )
+    builder.row(
+        InlineKeyboardButton(text="4 пара (14:00)", callback_data=NotePairCallback(pair=4).pack()),
+        InlineKeyboardButton(text="5 пара (15:40)", callback_data=NotePairCallback(pair=5).pack()),
+        InlineKeyboardButton(text="6 пара (17:20)", callback_data=NotePairCallback(pair=6).pack()),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="⏰ К началу дня" if lang == "ru" else "⏰ Before classes",
+            callback_data=NotePairCallback(pair=0).pack(),
+        ),
+        InlineKeyboardButton(
+            text="⏭ Без пары" if lang == "ru" else "⏭ Any time",
+            callback_data=NotePairCallback(pair=-1).pack(),
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="❌ Отмена" if lang == "ru" else "❌ Cancel",
+            callback_data=NotesCallback(action="cancel").pack(),
+        )
+    )
+    return builder.as_markup()
+
+
+def get_notification_settings_keyboard(
+    evening_time: str, morning_time: str, lead_min: int, enabled: bool, lang: str = "ru"
+) -> InlineKeyboardMarkup:
+    """Интерактивное меню тонкой регулировки времени рассылок и уведомлений."""
+    builder = InlineKeyboardBuilder()
+
+    status_text = "🔔 Статус рассылок: ВКЛ" if enabled else "🔕 Статус рассылок: ВЫКЛ"
+    if lang == "en":
+        status_text = "🔔 Notifications: ON" if enabled else "🔕 Notifications: OFF"
+
+    builder.row(
+        InlineKeyboardButton(
+            text=status_text,
+            callback_data=NotificationSettingCallback(target="toggle").pack()
+        )
+    )
+
+    ev_val = evening_time if evening_time and evening_time != "off" else ("Выкл" if lang == "ru" else "Off")
+    ev_label = f"🌙 На завтра: {ev_val}" if lang == "ru" else f"🌙 Tomorrow: {ev_val}"
+    builder.row(
+        InlineKeyboardButton(
+            text=ev_label,
+            callback_data=NotificationSettingCallback(target="evening_menu").pack()
+        )
+    )
+
+    mr_val = morning_time if morning_time and morning_time != "off" else ("Выкл" if lang == "ru" else "Off")
+    mr_label = f"☀️ На сегодня: {mr_val}" if lang == "ru" else f"☀️ Today: {mr_val}"
+    builder.row(
+        InlineKeyboardButton(
+            text=mr_label,
+            callback_data=NotificationSettingCallback(target="morning_menu").pack()
+        )
+    )
+
+    lead_str = f"за {lead_min} мин" if lead_min > 0 else ("в момент звонка" if lead_min == 0 else "выкл")
+    if lang == "en":
+        lead_str = f"{lead_min}m before" if lead_min > 0 else "at bell"
+    ld_label = f"⏱ До пары: {lead_str}" if lang == "ru" else f"⏱ Class reminder: {lead_str}"
+    builder.row(
+        InlineKeyboardButton(
+            text=ld_label,
+            callback_data=NotificationSettingCallback(target="lead_menu").pack()
+        )
+    )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="🏠 В главное меню" if lang == "ru" else "🏠 Main menu",
+            callback_data=NavigationCallback(to="main_menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_evening_time_selection_keyboard(current_val: str, lang: str = "ru") -> InlineKeyboardMarkup:
+    """Клавиатура выбора времени вечерней рассылки (на завтра)."""
+    builder = InlineKeyboardBuilder()
+    times = ["18:00", "19:00", "20:00", "21:00", "22:00", "off"]
+    row: list[InlineKeyboardButton] = []
+    for t in times:
+        label = t if t != "off" else ("Выкл" if lang == "ru" else "Off")
+        if t == current_val or (t == "20:00" and not current_val):
+            label = f"✅ {label}"
+        row.append(
+            InlineKeyboardButton(
+                text=label,
+                callback_data=NotificationSettingCallback(target="evening_set", value=t).pack()
+            )
+        )
+        if len(row) == 3:
+            builder.row(*row)
+            row = []
+    if row:
+        builder.row(*row)
+    builder.row(
+        InlineKeyboardButton(
+            text="⬅️ Назад к настройкам" if lang == "ru" else "⬅️ Back to settings",
+            callback_data=NotificationSettingCallback(target="menu").pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_morning_time_selection_keyboard(current_val: str, lang: str = "ru") -> InlineKeyboardMarkup:
+    """Клавиатура выбора времени утренней рассылки (на сегодня)."""
+    builder = InlineKeyboardBuilder()
+    times = ["07:00", "07:30", "08:00", "08:30", "09:00", "off"]
+    row: list[InlineKeyboardButton] = []
+    for t in times:
+        label = t if t != "off" else ("Выкл" if lang == "ru" else "Off")
+        if t == current_val or (t == "08:00" and not current_val):
+            label = f"✅ {label}"
+        row.append(
+            InlineKeyboardButton(
+                text=label,
+                callback_data=NotificationSettingCallback(target="morning_set", value=t).pack()
+            )
+        )
+        if len(row) == 3:
+            builder.row(*row)
+            row = []
+    if row:
+        builder.row(*row)
+    builder.row(
+        InlineKeyboardButton(
+            text="⬅️ Назад к настройкам" if lang == "ru" else "⬅️ Back to settings",
+            callback_data=NotificationSettingCallback(target="menu").pack()
         )
     )
     return builder.as_markup()

@@ -5,6 +5,7 @@ WORKDIR /app
 # Установка системных утилит и часового пояса
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tzdata \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 ENV TZ=Europe/Moscow

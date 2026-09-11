@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -148,6 +149,25 @@ class TimetableParser:
         subjects = {s["id"]: s.get("name", "Без названия").strip() for s in site_data.get("subjects", [])}
         teachers = {t["id"]: t.get("name", "").strip() for t in site_data.get("teachers", [])}
         rooms = {r["id"]: r.get("name", "").strip() for r in site_data.get("rooms", [])}
+        lesson_types = {t["id"]: t.get("name", "").strip() for t in site_data.get("lessonTypes", [])}
+
+        type_mapping = {
+            "лек": "Лекция",
+            "лекция": "Лекция",
+            "пр": "Практика",
+            "практика": "Практика",
+            "лаб": "Лабораторная",
+            "лабораторная": "Лабораторная",
+            "контрработа": "Контрольная работа",
+            "контрольная работа": "Контрольная работа",
+            "зч": "Зачёт",
+            "зачёт": "Зачёт",
+            "зачет": "Зачёт",
+            "зчо": "Дифф. зачёт",
+            "дифференцированный зачёт": "Дифф. зачёт",
+            "курсработа": "Курсовая работа",
+            "индпроект": "Инд. проект",
+        }
 
         sched = site_data.get("schedule", {})
         instances = sched.get("instances", [])
@@ -187,9 +207,12 @@ class TimetableParser:
             period_idx = int(ass.get("period", 0))
             pair_num = period_idx + 1
 
-            raw_time = cleaned_period_times[period_idx] if period_idx < len(cleaned_period_times) else ""
-            if not raw_time and period_idx < len(config.DEFAULT_PERIOD_TIMES):
+            if period_idx < len(config.DEFAULT_PERIOD_TIMES):
                 raw_time = config.DEFAULT_PERIOD_TIMES[period_idx]
+            elif period_idx < len(cleaned_period_times) and cleaned_period_times[period_idx]:
+                raw_time = cleaned_period_times[period_idx]
+            else:
+                raw_time = ""
 
             time_parts = raw_time.split("-")
             start_time = time_parts[0].strip() if len(time_parts) > 0 else ""
@@ -199,6 +222,10 @@ class TimetableParser:
             room_name = rooms.get(room_id, "")
             subject_name = subjects.get(inst.get("subjectId"), "Учебное занятие")
             teacher_name = teachers.get(inst.get("teacherId"), "")
+
+            type_id = inst.get("typeId", "")
+            raw_type_name = lesson_types.get(type_id, "").strip()
+            lesson_type = type_mapping.get(raw_type_name.lower(), raw_type_name or "Занятие")
 
             lesson_format = "Дистанционно" if inst.get("format") == "remote" else "Очно"
             subgroup = inst.get("subgroup", 0)
@@ -213,6 +240,7 @@ class TimetableParser:
                 "room": room_name,
                 "format": lesson_format,
                 "subgroup": subgroup,
+                "lesson_type": lesson_type,
             }
 
             lessons_map.setdefault(pair_num, []).append(lesson_item)
@@ -350,7 +378,8 @@ class TimetableParser:
             }
 
         # 4. Сохранение в SQLite кэш и оперативный RAM-кэш
-        await self.db.save_cached_timetable(group_id, date_str, schedule_data)
+        schedule_hash = compute_schedule_hash(schedule_data)
+        await self.db.save_cached_timetable(group_id, date_str, schedule_data, data_hash=schedule_hash)
         self._ram_day_cache[cache_key] = (schedule_data, datetime.now())
 
         return schedule_data
@@ -423,12 +452,27 @@ class TimetableParser:
 
 
 # -------------------------------------------------------------------------
-# ФУНКЦИИ ФОРМАТИРОВАНИЯ СООБЩЕНИЙ ДЛЯ TELEGRAM
+# ФУНКЦИИ ФОРМАТИРОВАНИЯ СООБЩЕНИЙ И ХЭШИРОВАНИЯ
 # -------------------------------------------------------------------------
+
+def compute_schedule_hash(schedule_data: dict[str, Any] | list[dict[str, Any]]) -> str:
+    """
+    Вычисляет стабильный MD5-хэш структуры пар дня для мониторинга замен и изменений.
+    """
+    if isinstance(schedule_data, list):
+        lessons = schedule_data
+    elif isinstance(schedule_data, dict):
+        lessons = schedule_data.get("lessons", [])
+    else:
+        lessons = []
+    canonical = json.dumps(lessons, sort_keys=True, ensure_ascii=False)
+    return hashlib.md5(canonical.encode("utf-8")).hexdigest()
+
 
 def format_day_schedule_message(schedule_data: dict[str, Any], group_name: str) -> str:
     """
-    Форматирует расписание на день в стильное читабельное сообщение с эмодзи.
+    Форматирует расписание на день в читабельное сообщение с эмодзи.
+    Группирует подгруппы по номеру пары в древовидную структуру без дублирования заголовка.
     """
     date_str = schedule_data.get("date", "")
     day_name = schedule_data.get("day_name", "")
@@ -454,29 +498,94 @@ def format_day_schedule_message(schedule_data: dict[str, Any], group_name: str) 
         lines.append("\n🎉 <b>В этот день пар нет! Отдыхайте.</b>")
         return "\n".join(lines)
 
+    # Группируем пары по номеру пары и времени
+    pairs_map: dict[tuple[int, str], list[dict[str, Any]]] = {}
     for idx, l in enumerate(lessons, start=1):
-        pair_num = l.get("pair_number", idx)
-        time_str = l.get("time", "")
-        subject = l.get("subject", "Без названия")
-        room = l.get("room", "")
-        teacher = l.get("teacher", "")
-        fmt = l.get("format", "Очно")
-        subgroup = l.get("subgroup", 0)
+        p_num = l.get("pair_number", idx)
+        p_time = l.get("time", "")
+        pairs_map.setdefault((p_num, p_time), []).append(l)
 
-        subgroup_str = f" [Подгруппа {subgroup}]" if subgroup else ""
-        format_icon = "🌐" if fmt == "Дистанционно" else "🏛"
+    for (pair_num, time_str), pair_lessons in pairs_map.items():
+        time_part = f" ({time_str})" if time_str else ""
+        first_l_type = pair_lessons[0].get("lesson_type", "")
+        type_badge = f" • <b>[{first_l_type}]</b>" if first_l_type and first_l_type != "Занятие" else ""
+        pair_header = f"\n🔹 <b>{pair_num} пара</b>{time_part}{type_badge}"
 
-        lines.append(f"\n🔹 <b>{pair_num} пара</b> ({time_str})")
-        lines.append(f"📖 <b>{subject}</b>{subgroup_str}")
+        if len(pair_lessons) > 1:
+            # Несколько записей для одного времени пары (деление на подгруппы)
+            pair_lessons.sort(key=lambda x: x.get("subgroup", 0))
+            subjects = [l.get("subject", "Учебное занятие") for l in pair_lessons]
+            # Проверяем, совпадает ли предмет у подгрупп
+            first_subj = subjects[0]
+            same_subject = all(s.strip().lower() == first_subj.strip().lower() for s in subjects)
 
-        details = []
-        if room:
-            details.append(f"🚪 <b>Ауд:</b> {room}")
-        if teacher:
-            details.append(f"👤 <b>Преп:</b> {teacher}")
-        details.append(f"{format_icon} <i>{fmt}</i>")
+            lines.append(pair_header)
+            if same_subject:
+                lines.append(f"📖 <b>{first_subj}</b>")
+                for i, l in enumerate(pair_lessons):
+                    is_last = (i == len(pair_lessons) - 1)
+                    branch = "└── " if is_last else "├── "
+                    sub = l.get("subgroup", i + 1)
+                    room = l.get("room", "")
+                    teacher = l.get("teacher", "")
+                    sub_type = l.get("lesson_type", "")
 
-        lines.append(" | ".join(details))
+                    parts = []
+                    if sub_type and sub_type != "Занятие":
+                        parts.append(f"[{sub_type}]")
+                    if room:
+                        parts.append(f"Ауд. {room}")
+                    if teacher:
+                        parts.append(f"👤 {teacher}")
+                    details_str = " | ".join(parts) if parts else "По расписанию"
+
+                    lines.append(f"{branch}👥 {sub} подгруппа: {details_str}")
+            else:
+                for i, l in enumerate(pair_lessons):
+                    is_last = (i == len(pair_lessons) - 1)
+                    branch = "└── " if is_last else "├── "
+                    sub = l.get("subgroup", i + 1)
+                    subj = l.get("subject", "Занятие")
+                    room = l.get("room", "")
+                    teacher = l.get("teacher", "")
+                    sub_type = l.get("lesson_type", "")
+
+                    parts = []
+                    if sub_type and sub_type != "Занятие":
+                        parts.append(f"[{sub_type}]")
+                    if room:
+                        parts.append(f"Ауд. {room}")
+                    if teacher:
+                        parts.append(f"👤 {teacher}")
+                    details_str = " | ".join(parts) if parts else "По расписанию"
+
+                    lines.append(f"{branch}👥 {sub} подгруппа ({subj}): {details_str}")
+        else:
+            # Одиночный вывод для всей группы целиком
+            l = pair_lessons[0]
+            subject = l.get("subject", "Без названия")
+            room = l.get("room", "")
+            teacher = l.get("teacher", "")
+            fmt = l.get("format", "Очно")
+            subgroup = l.get("subgroup", 0)
+            l_type = l.get("lesson_type", "")
+
+            subgroup_str = f" [Подгруппа {subgroup}]" if subgroup else ""
+            format_icon = "🌐" if fmt == "Дистанционно" else "🏛"
+
+            lines.append(pair_header)
+            lines.append(f"📖 <b>{subject}</b>{subgroup_str}")
+
+            details = []
+            if l_type and l_type != "Занятие":
+                details.append(f"🏷️ <i>{l_type}</i>")
+            if room:
+                details.append(f"🚪 <b>Ауд:</b> {room}")
+            if teacher:
+                details.append(f"👤 <b>Преп:</b> {teacher}")
+            details.append(f"{format_icon} <i>{fmt}</i>")
+
+            lines.append(" | ".join(details))
 
     return "\n".join(lines)
 
@@ -487,7 +596,6 @@ def format_week_schedule_messages(week_data: list[dict[str, Any]], group_name: s
     для соблюдения лимита Telegram (4096 символов).
     """
     messages: list[str] = []
-    first_date = week_data[0].get("date", "") if week_data else ""
     week_num = week_data[0].get("week_number", "") if week_data else ""
     parity_str = "четная" if (week_data and week_data[0].get("is_even_week")) else "нечетная"
 
@@ -520,27 +628,33 @@ def format_week_schedule_messages(week_data: list[dict[str, Any]], group_name: s
 def format_pair_notification(lesson: dict[str, Any], group_name: str) -> str:
     """
     Форматирует срочное уведомление о начале пары за 0 минут до звонка.
+    Требование: «🔔 Началась N пара! Предмет: X, Кабинет: Y».
     """
     pair_num = lesson.get("pair_number", "")
     time_str = lesson.get("time", "")
     subject = lesson.get("subject", "Занятие")
-    room = lesson.get("room", "Не указана")
-    teacher = lesson.get("teacher", "Не указан")
+    room = lesson.get("room", "Не указан")
+    teacher = lesson.get("teacher", "")
     fmt = lesson.get("format", "Очно")
     subgroup = lesson.get("subgroup", 0)
 
-    subgroup_str = f" [Подгруппа {subgroup}]" if subgroup else ""
+    time_info = f" ({time_str})" if time_str else ""
     format_icon = "🌐" if fmt == "Дистанционно" else "🏛"
 
-    return (
-        f"🔔 <b>Внимание! Пара началась</b>\n"
-        f"👥 <b>Группа:</b> <code>{group_name}</code>\n\n"
-        f"🔹 <b>{pair_num} пара</b> ({time_str})\n"
-        f"📖 <b>{subject}</b>{subgroup_str}\n"
-        f"🚪 <b>Аудитория:</b> {room}\n"
-        f"👤 <b>Преподаватель:</b> {teacher}\n"
-        f"{format_icon} <b>Формат:</b> {fmt}"
-    )
+    lines = [
+        f"🔔 <b>Началась {pair_num} пара! Предмет: {subject}, Кабинет: {room}</b>",
+        f"👥 <b>Группа:</b> <code>{group_name}</code>{time_info}",
+    ]
+    details = []
+    if teacher:
+        details.append(f"👤 <b>Преподаватель:</b> {teacher}")
+    if subgroup:
+        details.append(f"👥 <b>Подгруппа:</b> {subgroup}")
+    details.append(f"{format_icon} <i>{fmt}</i>")
+    if details:
+        lines.append(" | ".join(details))
+
+    return "\n".join(lines)
 
 
 # Глобальный экземпляр парсера расписания

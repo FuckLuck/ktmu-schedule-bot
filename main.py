@@ -11,7 +11,7 @@ from database import db
 from handlers import router
 from scheduler import setup_scheduler
 from structure_parser import sync_structure
-from throttling import ThrottlingMiddleware
+from throttling import MenuNavResetMiddleware, ThrottlingMiddleware
 from timetable_parser import timetable_parser
 
 # Настройка структурированного логирования
@@ -68,10 +68,14 @@ async def on_startup(bot: Bot) -> None:
         BotCommand(command="today", description="Расписание на сегодня"),
         BotCommand(command="tomorrow", description="Расписание на завтра"),
         BotCommand(command="week", description="Расписание на неделю"),
+        BotCommand(command="find_teacher", description="Поиск преподавателя"),
+        BotCommand(command="group_help", description="Инструкция по добавлению в чат/тему"),
+        BotCommand(command="set_topic", description="Привязать тему форума к группе"),
         BotCommand(command="set_group", description="Выбрать группу (для себя или чата)"),
         BotCommand(command="change_group", description="Сменить группу"),
         BotCommand(command="notifications", description="Настройка уведомлений"),
         BotCommand(command="admin", description="Панель администратора (ID: 870396858)"),
+        BotCommand(command="stats", description="Статистика бота (только для админа)"),
         BotCommand(command="author", description="Связь с автором (@yapsychokid)"),
         BotCommand(command="help", description="Справка и помощь"),
     ]
@@ -89,7 +93,6 @@ async def on_shutdown(bot: Bot) -> None:
     """
     Корректная остановка сервисов при завершении процесса (Graceful Shutdown).
     """
-    global scheduler_service
     logger.info("Остановка бота...")
     if scheduler_service:
         scheduler_service.shutdown()
@@ -122,6 +125,11 @@ async def main() -> None:
     throttling = ThrottlingMiddleware(rate_limit=config.THROTTLING_RATE_LIMIT)
     dp.message.outer_middleware(throttling)
     dp.callback_query.outer_middleware(throttling)
+
+    # Авто-сброс FSM-состояний при навигации по меню и командам
+    nav_reset = MenuNavResetMiddleware()
+    dp.message.outer_middleware(nav_reset)
+    dp.callback_query.outer_middleware(nav_reset)
 
     # Регистрация роутеров
     dp.include_router(router)

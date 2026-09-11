@@ -107,3 +107,73 @@ class ThrottlingMiddleware(BaseMiddleware):
             self._last_request_time.pop(uid, None)
             self._user_warned.pop(uid, None)
         logger.info("Очистка троттлинг-кэша: удалено %d устаревших записей", len(stale_users))
+
+
+NAV_MENU_BUTTONS: set[str] = {
+    # Главное меню
+    "📅 На сегодня", "📅 Today",
+    "📆 На завтра", "🌅 Tomorrow",
+    "🗓 На неделю", "📆 Full Week",
+    "⏰ Звонки", "⏰ Bells",
+    "🎓 Меню группы (ДЗ / Староста)", "🎓 Group menu (HW / Starosta)", "🎓 Меню группы",
+    "🔍 Поиск преподавателя", "🔍 Teacher search",
+    "⚙️ Настройки и связь", "⚙️ Settings & info", "⚙️ Настройки",
+    "👑 Админ-панель", "👑 Admin Panel",
+
+    # Меню группы
+    "📚 ДЗ 📚", "📚 Homework 📚", "📚 ДЗ",
+    "💬 Чат группы", "💬 Group chat",
+    "📝 Личные заметки", "📝 Personal notes",
+    "🙋‍♂️ Староста 🙋‍♂️", "🙋‍♂️ Starosta 🙋‍♂️",
+    "⚙️ Сменить группу", "⚙️ Change group",
+
+    # Настройки и связь
+    "🌐 Язык", "🌐 Language",
+    "ℹ️ Бот в группу", "➕ Bot to group",
+    "👨‍💻 Связь с автором", "👨‍💻 Contact author",
+    "📖 Инструкция", "📖 Guide",
+
+    # Возврат в меню
+    "⬅️ Главное меню", "⬅️ Main menu", "🏠 Главное меню", "В главное меню",
+}
+
+
+def is_nav_button_or_command(text: Optional[str]) -> bool:
+    """Проверяет, является ли введенный текст кнопкой навигации или командой бота."""
+    if not text:
+        return False
+    clean = text.strip()
+    if clean.startswith("/"):
+        return True
+    if "Уведомления" in clean or "Notifs" in clean:
+        return True
+    return clean in NAV_MENU_BUTTONS
+
+
+class MenuNavResetMiddleware(BaseMiddleware):
+    """
+    Middleware, гарантирующий сброс FSM-состояния при нажатии на кнопки меню или команды.
+    Предотвращает ошибочный перехват меню состояниями ввода (поиск, заметки, ДЗ и т.д.).
+    """
+
+    async def __call__(
+        self,
+        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: Dict[str, Any],
+    ) -> Any:
+        state = data.get("state")
+        if state:
+            if isinstance(event, Message) and event.text:
+                if is_nav_button_or_command(event.text):
+                    cur_state = await state.get_state()
+                    if cur_state is not None:
+                        await state.clear()
+            elif isinstance(event, CallbackQuery) and event.data:
+                if event.data.startswith("nav:main_menu"):
+                    cur_state = await state.get_state()
+                    if cur_state is not None:
+                        await state.clear()
+
+        return await handler(event, data)
+

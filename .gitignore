@@ -19,3 +19,10 @@ __pycache__/
 venv/
 .venv/
 env/
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
