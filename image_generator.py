@@ -6,6 +6,7 @@
 import io
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
@@ -38,8 +39,27 @@ MONTHS_RU = {
 }
 
 
+BASE_DIR = Path(__file__).resolve().parent
+FONTS_DIR = BASE_DIR / "assets" / "fonts"
+
+
 def _get_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Загружает системный шрифт Segoe UI / Arial или fallback."""
+    """Загружает шрифт с поддержкой кириллицы из assets/fonts, системы или fallback."""
+    # 1. Приоритет: встроенные проверенные шрифты из assets/fonts/ (гарантируют кириллицу на любом хосте)
+    bundled_names = (
+        ["font_bold.ttf", "font.ttf"]
+        if bold
+        else ["font.ttf", "font_bold.ttf"]
+    )
+    for name in bundled_names:
+        font_path = FONTS_DIR / name
+        if font_path.exists():
+            try:
+                return ImageFont.truetype(str(font_path), size)
+            except Exception:
+                pass
+
+    # 2. Системные шрифты Windows
     font_names = (
         ["segoeuib.ttf", "arialbd.ttf", "arial.ttf"]
         if bold
@@ -52,13 +72,20 @@ def _get_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFo
                 return ImageFont.truetype(win_path, size)
             except Exception:
                 pass
-        # Linux / container fallback
-        for linux_path in [f"/usr/share/fonts/truetype/dejavu/DejaVuSans{'-Bold' if bold else ''}.ttf"]:
-            if os.path.exists(linux_path):
-                try:
-                    return ImageFont.truetype(linux_path, size)
-                except Exception:
-                    pass
+
+    # 3. Linux / container fallback
+    linux_paths = [
+        f"/usr/share/fonts/truetype/dejavu/DejaVuSans{'-Bold' if bold else ''}.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    ]
+    for linux_path in linux_paths:
+        if os.path.exists(linux_path):
+            try:
+                return ImageFont.truetype(linux_path, size)
+            except Exception:
+                pass
+
     return ImageFont.load_default()
 
 

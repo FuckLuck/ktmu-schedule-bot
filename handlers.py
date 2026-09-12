@@ -1,5 +1,8 @@
 import asyncio
 import logging
+import os
+import shutil
+import sqlite3
 from datetime import date, datetime, time, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -8,7 +11,14 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import BufferedInputFile, CallbackQuery, ChatMemberUpdated, InputMediaPhoto, Message
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    ChatMemberUpdated,
+    FSInputFile,
+    InputMediaPhoto,
+    Message,
+)
 
 from config import config
 from database import Database, db as default_db
@@ -116,6 +126,7 @@ def clear_ram_image_cache() -> None:
 
 class AdminStates(StatesGroup):
     waiting_for_broadcast_text = State()
+    waiting_for_db_file = State()
 
 
 class TeacherSearchStates(StatesGroup):
@@ -3147,6 +3158,41 @@ async def cb_admin_actions(
         )
         await callback.answer("Кэш очищен!")
 
+    elif action == "export_db":
+        await callback.answer("⏳ Подготовка базы данных...")
+        if not os.path.exists(database.db_path):
+            await callback.message.answer("❌ Файл базы данных не найден на сервере.")
+            return
+        now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        file_size_kb = os.path.getsize(database.db_path) / 1024
+        doc = FSInputFile(database.db_path, filename=f"ktmu_bot_backup_{now_str}.db")
+        await callback.message.answer_document(
+            document=doc,
+            caption=(
+                f"💾 <b>Резервная копия базы данных КТМУ</b>\n\n"
+                f"📁 Файл: <code>{os.path.basename(database.db_path)}</code>\n"
+                f"📦 Размер: <code>{file_size_kb:.1f} КБ</code>\n"
+                f"⏰ Дата: <code>{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}</code>\n\n"
+                f"💡 Сохраните этот файл. Его можно загрузить на хост или восстановить кнопкой «📥 Загрузить БД»."
+            ),
+            parse_mode="HTML",
+        )
+
+    elif action == "import_db":
+        await state.set_state(AdminStates.waiting_for_db_file)
+        kb = get_admin_back_inline_keyboard()
+        await callback.message.edit_text(
+            "📥 <b>Загрузка / Восстановление базы данных</b>\n\n"
+            "Отправьте файл базы данных (с расширением <code>.db</code> или <code>.sqlite</code>) "
+            "прямо сюда в диалог <b>документом (без сжатия)</b>.\n\n"
+            "⚠️ <b>Внимание:</b> Текущая база данных будет автоматически сохранена в резервную копию "
+            "<code>.bak</code> перед заменой.\n\n"
+            "<i>Для отмены нажмите кнопку ниже:</i>",
+            reply_markup=kb,
+            parse_mode="HTML",
+        )
+        await callback.answer()
+
     elif action == "close":
         try:
             await callback.message.delete()
@@ -3234,6 +3280,140 @@ async def process_admin_broadcast(message: Message, state: FSMContext, database:
         reply_markup=kb,
         parse_mode="HTML",
     )
+
+
+@router.message(Command("backup_db"))
+@router.message(Command("export_db"))
+async def cmd_backup_db(message: Message, database: Database = default_db):
+    """Отправляет файл базы данных администратору."""
+    user_id = message.from_user.id
+    if not config.is_admin(user_id):
+        return
+    if not os.path.exists(database.db_path):
+        await message.answer("❌ Файл базы данных не найден на сервере.")
+        return
+    now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_size_kb = os.path.getsize(database.db_path) / 1024
+    doc = FSInputFile(database.db_path, filename=f"ktmu_bot_backup_{now_str}.db")
+    await message.answer_document(
+        document=doc,
+        caption=(
+            f"💾 <b>Резервная копия базы данных КТМУ</b>\n\n"
+            f"📁 Файл: <code>{os.path.basename(database.db_path)}</code>\n"
+            f"📦 Размер: <code>{file_size_kb:.1f} КБ</code>\n"
+            f"⏰ Дата: <code>{datetime.now().strftime('%d.%m.%Y %H:%M:%S')}</code>\n\n"
+            f"💡 Для восстановления отправьте этот файл боту или используйте команду /restore_db."
+        ),
+        parse_mode="HTML",
+    )
+
+
+@router.message(Command("restore_db"))
+@router.message(Command("import_db"))
+async def cmd_restore_db(message: Message, state: FSMContext):
+    """Переводит бота в режим ожидания файла БД для восстановления."""
+    user_id = message.from_user.id
+    if not config.is_admin(user_id):
+        return
+    await state.set_state(AdminStates.waiting_for_db_file)
+    kb = get_admin_back_inline_keyboard()
+    await message.answer(
+        "📥 <b>Загрузка / Восстановление базы данных</b>\n\n"
+        "Отправьте файл базы данных (с расширением <code>.db</code> или <code>.sqlite</code>) "
+        "документом в этот диалог.\n\n"
+        "⚠️ <b>Внимание:</b> Текущая база данных будет автоматически забэкаплена перед заменой.\n\n"
+        "<i>Для отмены отправьте /cancel или откройте /admin.</i>",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+
+
+@router.message(AdminStates.waiting_for_db_file, F.document)
+@router.message(F.document & (F.caption == "/restore_db"))
+async def process_admin_restore_db(
+    message: Message,
+    state: FSMContext,
+    bot: Bot,
+    database: Database = default_db,
+):
+    """Принимает файл БД, проверяет его целостность и восстанавливает базу."""
+    user_id = message.from_user.id
+    if not config.is_admin(user_id):
+        await state.clear()
+        return
+
+    doc = message.document
+    fname = (doc.file_name or "").lower()
+    if not (fname.endswith(".db") or fname.endswith(".sqlite")):
+        await message.answer(
+            "❌ <b>Некорректный формат файла.</b>\n"
+            "Файл должен иметь расширение <code>.db</code> или <code>.sqlite</code> (например, <code>ktmu_bot.db</code>).\n"
+            "Пожалуйста, отправьте корректный файл:"
+        )
+        return
+
+    status_msg = await message.answer("⏳ <i>Скачивание и валидация базы данных...</i>", parse_mode="HTML")
+    temp_path = f"{database.db_path}.tmp_import"
+
+    try:
+        tg_file = await bot.get_file(doc.file_id)
+        await bot.download_file(tg_file.file_path, destination=temp_path)
+
+        # Проверяем валидность SQLite
+        conn = sqlite3.connect(temp_path)
+        try:
+            cur = conn.cursor()
+            cur.execute("PRAGMA integrity_check;")
+            row = cur.fetchone()
+            if not row or row[0] != "ok":
+                raise ValueError("Файл поврежден (нарушена целостность структуры SQLite).")
+
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = {r[0] for r in cur.fetchall()}
+            if "users" not in tables:
+                raise ValueError("В базе отсутствует обязательная таблица 'users'.")
+        finally:
+            conn.close()
+
+        # Резервное копирование старой БД
+        if os.path.exists(database.db_path):
+            shutil.copy2(database.db_path, f"{database.db_path}.bak")
+
+        # Заменяем текущую БД новым файлом
+        shutil.copy2(temp_path, database.db_path)
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+        # Переинициализация и очистка кэшей
+        await database.init_db()
+        timetable_parser.clear_ram_cache()
+        clear_ram_image_cache()
+
+        stats = await database.get_admin_stats()
+        await state.clear()
+
+        await status_msg.edit_text(
+            "✅ <b>База данных успешно загружена и восстановлена!</b>\n\n"
+            f"👥 Всего пользователей: <code>{stats['total_users']}</code>\n"
+            f"👤 Личных диалогов: <code>{stats.get('private_users', stats['total_users'])}</code>\n"
+            f"💬 Групповых чатов: <code>{stats.get('group_chats', 0)}</code>\n"
+            f"🎓 С выбранной группой: <code>{stats['with_group']}</code>\n"
+            f"🔔 С включенными рассылками: <code>{stats['notifications_on']}</code>\n"
+            f"🏛 Групп колледжа: <code>{stats['total_groups']}</code>\n\n"
+            "Все пользователи, настройки и расписания восстановлены!",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+        await status_msg.edit_text(
+            f"❌ <b>Ошибка при восстановлении базы данных:</b>\n<code>{e}</code>\n\n"
+            "Текущая база данных осталась без изменений.",
+            parse_mode="HTML",
+        )
 
 
 # -------------------------------------------------------------------------

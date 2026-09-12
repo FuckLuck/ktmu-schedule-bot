@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     BOT_TOKEN: str = "YOUR_TELEGRAM_BOT_TOKEN_HERE"
     BASE_URL: str = "https://timetable-ktmu.ru"
-    DATABASE_PATH: str = os.getenv("DATABASE_PATH", "data/bot_database.db")
+    DATABASE_PATH: str = os.getenv("DATABASE_PATH", "ktmu_bot.db")
     TIMEZONE: str = "Europe/Moscow"
     CACHE_TTL_HOURS: int = 6
     THROTTLING_RATE_LIMIT: float = 0.8

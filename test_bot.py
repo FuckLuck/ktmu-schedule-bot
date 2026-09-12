@@ -2470,4 +2470,92 @@ async def test_send_day_schedule_with_image_and_caching(test_db):
         assert call_kwargs["chat_id"] == 456
 
 
+@pytest.mark.asyncio
+async def test_get_font_bundled():
+    """Тест загрузки бандлованных шрифтов с поддержкой кириллицы."""
+    from image_generator import _get_font, render_schedule_image
 
+    font_regular = _get_font(18, bold=False)
+    font_bold = _get_font(24, bold=True)
+    assert font_regular is not None
+    assert font_bold is not None
+
+    sample_day = {
+        "date": "2026-09-13",
+        "day_name": "Понедельник",
+        "week_number": 2,
+        "is_even_week": True,
+        "lessons": [
+            {
+                "pair_number": 1,
+                "time": "08:30-10:00",
+                "subject": "Математика и криптография",
+                "room": "305",
+                "teacher": "Смирнов А.А.",
+            }
+        ],
+    }
+    img_io = render_schedule_image(sample_day, "1-ИС-2", bot_username="schedulektmubot")
+    assert img_io is not None
+    assert len(img_io.getvalue()) > 10000
+
+
+@pytest.mark.asyncio
+async def test_admin_backup_and_restore_db(test_db, tmp_path):
+    """Тест выгрузки бэкапа БД и восстановления базы администратором."""
+    from handlers import cmd_backup_db, process_admin_restore_db
+    from aiogram.types import User
+    import sqlite3
+
+    # 1. Тест cmd_backup_db
+    user_admin = User(id=870396858, is_bot=False, first_name="Админ")
+    msg_admin = MagicMock(spec=Message)
+    msg_admin.from_user = user_admin
+    msg_admin.answer_document = AsyncMock()
+
+    await cmd_backup_db(msg_admin, database=test_db)
+    assert msg_admin.answer_document.called
+
+    # 2. Создаем тестовую валидную БД для импорта
+    new_db_file = tmp_path / "valid_restore.db"
+    import shutil
+    shutil.copy2(test_db.db_path, new_db_file)
+    conn = sqlite3.connect(new_db_file)
+    try:
+        conn.execute("INSERT OR REPLACE INTO users (user_id, first_name) VALUES (999, 'НовыйСтудент');")
+        conn.commit()
+    finally:
+        conn.close()
+
+    # 3. Тест process_admin_restore_db
+    mock_bot = MagicMock()
+    mock_file = MagicMock()
+    mock_file.file_path = "path/on/server"
+    mock_bot.get_file = AsyncMock(return_value=mock_file)
+
+    async def fake_download(file_path, destination):
+        import shutil
+        shutil.copy2(new_db_file, destination)
+
+    mock_bot.download_file = AsyncMock(side_effect=fake_download)
+
+    mock_doc = MagicMock()
+    mock_doc.file_name = "ktmu_bot.db"
+    mock_doc.file_id = "doc123"
+
+    msg_restore = MagicMock(spec=Message)
+    msg_restore.from_user = user_admin
+    msg_restore.document = mock_doc
+    status_mock = MagicMock()
+    status_mock.edit_text = AsyncMock()
+    msg_restore.answer = AsyncMock(return_value=status_mock)
+
+    mock_state = AsyncMock(spec=FSMContext)
+
+    await process_admin_restore_db(msg_restore, mock_state, mock_bot, database=test_db)
+    assert mock_state.clear.called
+    assert "успешно загружена и восстановлена" in status_mock.edit_text.call_args[0][0]
+
+    # Проверяем, что в test_db теперь есть новый студент
+    user_check = await test_db.get_user(999)
+    assert user_check is not None

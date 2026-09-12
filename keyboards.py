@@ -935,6 +935,16 @@ def get_admin_main_inline_keyboard() -> InlineKeyboardMarkup:
     )
     builder.row(
         InlineKeyboardButton(
+            text="💾 Скачать БД",
+            callback_data=AdminCallback(action="export_db").pack()
+        ),
+        InlineKeyboardButton(
+            text="📥 Загрузить БД",
+            callback_data=AdminCallback(action="import_db").pack()
+        ),
+    )
+    builder.row(
+        InlineKeyboardButton(
             text="❌ Закрыть панель",
             callback_data=AdminCallback(action="close").pack()
         )
