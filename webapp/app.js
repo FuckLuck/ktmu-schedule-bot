@@ -193,65 +193,180 @@
   function applyMockData() {
     state.groupName = '1-КПД-2';
     state.weekNumber = 4;
-    state.isEvenWeek = false;
+    state.isEvenWeek = true;
 
-    // Генерируем тестовую неделю от текущего понедельника
+    // Генерируем учебную неделю от текущего понедельника
     const now = new Date();
     const dayOfWeek = (now.getDay() + 6) % 7; // 0 = Пн, 6 = Вс
     const monday = new Date(now);
     monday.setDate(now.getDate() - dayOfWeek);
+
+    const realScheduleByDay = [
+      // Пн (день 0)
+      [
+        {
+          pair_number: 2,
+          time: '10:10-11:40',
+          subject: 'Математика',
+          lesson_type: 'Практика',
+          room: '39',
+          teacher: 'Братищева В.А.',
+          subgroup: 0
+        },
+        {
+          pair_number: 3,
+          time: '11:50-13:20',
+          subject: 'Математика',
+          lesson_type: 'Лекция',
+          room: '39',
+          teacher: 'Братищева В.А.',
+          subgroup: 0
+        },
+        {
+          pair_number: 4,
+          time: '14:00-15:30',
+          subject: 'Иностранный язык',
+          lesson_type: 'Практика',
+          room: '204',
+          teacher: 'Сорваль М.П.',
+          subgroup: 2
+        }
+      ],
+      // Вт (день 1)
+      [
+        {
+          pair_number: 1,
+          time: '08:30-10:00',
+          subject: 'Математика',
+          lesson_type: 'Практика',
+          room: '3',
+          teacher: 'Братищева В.А.',
+          subgroup: 0
+        },
+        {
+          pair_number: 2,
+          time: '10:10-11:40',
+          subject: 'История',
+          lesson_type: 'Практика',
+          room: '45',
+          teacher: 'Иванова Е.В.',
+          subgroup: 0
+        },
+        {
+          pair_number: 3,
+          time: '11:50-13:20',
+          subject: 'Русский язык',
+          lesson_type: 'Практика',
+          room: '31',
+          teacher: 'Ковалева Н.С.',
+          subgroup: 0
+        },
+        {
+          pair_number: 4,
+          time: '14:00-15:30',
+          subject: 'Физика',
+          lesson_type: 'Практика',
+          room: '50',
+          teacher: 'Семенов А.П.',
+          subgroup: 0
+        }
+      ],
+      // Ср (день 2)
+      [
+        {
+          pair_number: 1,
+          time: '08:30-10:00',
+          subject: 'Обществознание',
+          lesson_type: 'Практика',
+          room: '5',
+          teacher: 'Николаев В.Г.',
+          subgroup: 0
+        },
+        {
+          pair_number: 2,
+          time: '10:10-11:40',
+          subject: 'Физическая культура',
+          lesson_type: 'Практика',
+          room: 'Спортзал',
+          teacher: 'Кузнецов Д.М.',
+          subgroup: 0
+        },
+        {
+          pair_number: 3,
+          time: '11:50-13:20',
+          subject: 'Информатика и ИКТ',
+          lesson_type: 'Практика',
+          room: '40',
+          teacher: 'Федорова О.С.',
+          subgroup: 1
+        }
+      ],
+      // Чт (день 3)
+      [
+        {
+          pair_number: 2,
+          time: '10:05-11:30',
+          subject: 'Введение в специальность',
+          lesson_type: 'Практика',
+          room: 'Вознесенский пр., 44',
+          teacher: 'Михайлов И.К.',
+          subgroup: 0,
+          is_external: true
+        },
+        {
+          pair_number: 3,
+          time: '11:40-13:05',
+          subject: 'Введение в специальность',
+          lesson_type: 'Практика',
+          room: 'Вознесенский пр., 44',
+          teacher: 'Михайлов И.К.',
+          subgroup: 0,
+          is_external: true
+        }
+      ],
+      // Пт (день 4)
+      [
+        {
+          pair_number: 2,
+          time: '10:10-11:40',
+          subject: 'Литература',
+          lesson_type: 'Практика',
+          room: '44',
+          teacher: 'Ковалева Н.С.',
+          subgroup: 0
+        },
+        {
+          pair_number: 3,
+          time: '11:50-13:20',
+          subject: 'Литература',
+          lesson_type: 'Практика',
+          room: '30',
+          teacher: 'Ковалева Н.С.',
+          subgroup: 0
+        },
+        {
+          pair_number: 4,
+          time: '14:00-15:30',
+          subject: 'География',
+          lesson_type: 'Практика',
+          room: '37',
+          teacher: 'Попова Т.А.',
+          subgroup: 0
+        }
+      ],
+      // Сб (день 5)
+      []
+    ];
 
     const days = [];
     for (let i = 0; i < 6; i++) {
       const d = new Date(monday);
       d.setDate(monday.getDate() + i);
       const isoDate = d.toISOString().split('T')[0];
-
-      let lessons = [];
-      if (i < 5) {
-        lessons = [
-          {
-            pair_number: 1,
-            time: '08:30-10:00',
-            subject: 'Информационные технологии',
-            lesson_type: 'Лекция',
-            room: '202',
-            teacher: 'Иванов И.И.',
-            subgroup: 0
-          },
-          {
-            pair_number: 2,
-            time: '10:10-11:40',
-            subject: 'Программирование Python',
-            lesson_type: 'Практика',
-            room: '304 (Вознесенский)',
-            teacher: 'Петров П.П.',
-            subgroup: 1
-          },
-          {
-            pair_number: 2,
-            time: '10:10-11:40',
-            subject: 'Компьютерные сети',
-            lesson_type: 'Лаб',
-            room: '105',
-            teacher: 'Сидоров С.С.',
-            subgroup: 2
-          },
-          {
-            pair_number: 3,
-            time: '11:50-13:20',
-            subject: 'Высшая математика',
-            lesson_type: 'Практика',
-            room: '401',
-            teacher: 'Смирнова А.В.',
-            subgroup: 0
-          }
-        ];
-      }
       days.push({
         date: isoDate,
         day_name: RU_WEEKDAYS[i],
-        lessons: lessons
+        lessons: realScheduleByDay[i] || []
       });
     }
     state.weekDays = days;

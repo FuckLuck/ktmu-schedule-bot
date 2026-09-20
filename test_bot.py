@@ -1095,11 +1095,10 @@ def test_bonchgo_schedule_navigation_keyboard():
     assert "05.09" in r2[0].text and "⏪" in r2[0].text
     assert "19.09" in r2[1].text and "⏩" in r2[1].text
 
-    # Ряд 3: Картинка и Вся неделя
+    # Ряд 3: Вся неделя (кнопка Картинка удалена по требованию)
     r3 = rows[2]
-    assert len(r3) == 2
-    assert "Картинка" in r3[0].text
-    assert "Вся неделя" in r3[1].text
+    assert len(r3) == 1
+    assert "Вся неделя" in r3[0].text
 
 
 def test_render_schedule_image():

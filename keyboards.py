@@ -271,12 +271,8 @@ def get_schedule_bonch_keyboard(
         ),
     )
 
-    # Ряд 3: Картинка и Вся неделя
+    # Ряд 3: Вся неделя
     builder.row(
-        InlineKeyboardButton(
-            text="🖼 Картинка",
-            callback_data=ScheduleNavCallback(action="image", date_str=target_date.isoformat()).pack()
-        ),
         InlineKeyboardButton(
             text="📆 Вся неделя",
             callback_data=ScheduleNavCallback(action="week", date_str=target_date.isoformat()).pack()
@@ -289,15 +285,6 @@ def get_schedule_bonch_keyboard(
             InlineKeyboardButton(
                 text="📱 Открыть в приложении",
                 web_app=WebAppInfo(url=webapp_url)
-            )
-        )
-
-    # Кнопка экспорта в календарь
-    if show_calendar:
-        builder.row(
-            InlineKeyboardButton(
-                text="📅 В календарь (.ics)",
-                callback_data=ScheduleNavCallback(action="calendar", date_str=target_date.isoformat()).pack()
             )
         )
 

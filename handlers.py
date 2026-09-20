@@ -931,12 +931,37 @@ async def send_day_schedule_with_image(
     else:
         caption = f"{notice_prefix}🗓 <b>Расписание группы {group_name}</b> на {formatted_date}".strip()
 
-    webapp_url = build_webapp_url(group_name=group_name, subgroup=user_subgroup)
+    week_schedule = []
+    try:
+        week_schedule = await timetable_parser.fetch_week_schedule(
+            group_id=group_id, start_date=target_date
+        )
+    except Exception as e:
+        logger.warning("Не удалось предзагрузить неделю для WebApp: %s", e)
+
+    skipped_list = []
+    if chat_id > 0 and week_schedule:
+        for d in week_schedule:
+            d_date = d.get("date")
+            if d_date:
+                u_skips = await database.get_skipped_pairs(chat_id, d_date)
+                for p_num in u_skips:
+                    skipped_list.append(f"{d_date}:{p_num}")
+
+    webapp_url = build_webapp_url(
+        group_name=group_name,
+        subgroup=user_subgroup,
+        week_days=week_schedule if week_schedule else [sched],
+        week_number=sched.get("week_number", 4),
+        is_even=sched.get("is_even", False),
+        user_id=chat_id if chat_id > 0 else None,
+        skipped_pairs=skipped_list if skipped_list else None,
+    )
     kb = get_schedule_bonch_keyboard(
         target_date=target_date,
         show_back_to_menu=not is_group,
         show_today_past=show_today_past,
-        show_calendar=True,
+        show_calendar=False,
         webapp_url=webapp_url,
     )
 
