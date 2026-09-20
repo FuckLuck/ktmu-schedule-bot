@@ -574,16 +574,50 @@ def compute_schedule_hash(schedule_data: dict[str, Any] | list[dict[str, Any]]) 
     return hashlib.md5(canonical.encode("utf-8")).hexdigest()
 
 
-def format_day_schedule_message(schedule_data: dict[str, Any], group_name: str) -> str:
+
+def filter_lessons_by_subgroup(
+    lessons: list[dict[str, Any]],
+    user_subgroup: int,
+    overrides: Optional[dict[str, int]] = None,
+) -> list[dict[str, Any]]:
+    """
+    Фильтрует список занятий с учетом подгруппы пользователя (1 или 2)
+    и опциональных персональных переопределений по предметам.
+    Если user_subgroup == 0 (обе подгруппы), возвращает исходный список.
+    """
+    if user_subgroup not in (1, 2):
+        return lessons
+
+    filtered: list[dict[str, Any]] = []
+    overrides = overrides or {}
+
+    for l in lessons:
+        subj = (l.get("subject") or "").strip()
+        target_sub = overrides.get(subj, user_subgroup)
+        l_sub = int(l.get("subgroup") or 0)
+        if l_sub == 0 or l_sub == target_sub:
+            filtered.append(l)
+
+    return filtered
+
+
+def format_day_schedule_message(
+    schedule_data: dict[str, Any],
+    group_name: str,
+    user_subgroup: int = 0,
+    subgroup_overrides: Optional[dict[str, int]] = None,
+) -> str:
     """
     Форматирует расписание на день в читабельное сообщение с эмодзи.
     Группирует подгруппы по номеру пары в древовидную структуру без дублирования заголовка.
+    При user_subgroup > 0 фильтрует пары под конкретную подгруппу.
     """
     date_str = schedule_data.get("date", "")
     day_name = schedule_data.get("day_name", "")
     week_num = schedule_data.get("week_number", "")
     parity_str = "четная" if schedule_data.get("is_even_week") else "нечетная"
-    lessons = schedule_data.get("lessons", [])
+    raw_lessons = schedule_data.get("lessons", [])
+    lessons = filter_lessons_by_subgroup(raw_lessons, user_subgroup, subgroup_overrides)
 
     formatted_date = date_str
     try:
@@ -595,9 +629,13 @@ def format_day_schedule_message(schedule_data: dict[str, Any], group_name: str) 
     lines = [
         f"📅 <b>Расписание на {day_name}</b>, {formatted_date}",
         f"👥 <b>Группа:</b> <code>{group_name}</code>",
+    ]
+    if user_subgroup in (1, 2):
+        lines.append(f"👤 <b>Подгруппа:</b> {user_subgroup}")
+    lines.extend([
         f"🔢 <b>Неделя:</b> {week_num} ({parity_str})",
         "────────────────────",
-    ]
+    ])
 
     if not lessons:
         lines.append("\n🎉 <b>В этот день пар нет! Отдыхайте.</b>")
@@ -874,7 +912,11 @@ def compute_schedule_diff(
 
 
 def get_current_pair_status_info(
-    sched: dict[str, Any], current_dt: datetime, group_name: str, lang: str = "ru"
+    sched: dict[str, Any],
+    current_dt: datetime,
+    group_name: str,
+    lang: str = "ru",
+    skipped_pairs: Optional[list[int]] = None,
 ) -> str:
     """
     Рассчитывает в реальном времени текущее состояние учебного процесса:
@@ -883,12 +925,15 @@ def get_current_pair_status_info(
     - На перемене (сколько минут осталось отдыхать, куда идти)
     - После окончания всех пар
     - Выходной день
+    - Учет пропущенных пар (сон / отметка 'не иду на пару')
     """
     lessons = sched.get("lessons", [])
     if not lessons:
         if lang == "en":
             return f"🎉 <b>No classes scheduled for today!</b>\nEnjoy your rest, group <code>{group_name}</code>!"
         return f"🎉 <b>Сегодня занятий нет!</b>\nОтдыхайте и набирайтесь сил, группа <code>{group_name}</code>!"
+
+    skipped_set = set(skipped_pairs or [])
 
     def _parse_time_str(t_str: str) -> Optional[time]:
         try:
@@ -936,6 +981,15 @@ def get_current_pair_status_info(
     if not pair_blocks:
         return format_day_schedule_message(sched, group_name)
 
+    # Если пользователь спит и пропускает ВСЕ пары на сегодня
+    if skipped_set and all(b["pair_number"] in skipped_set for b in pair_blocks):
+        return (
+            f"💤 <b>Вы отметили пропуск всех пар на сегодня!</b>\n"
+            f"👥 Группа: <code>{group_name}</code>\n\n"
+            f"😴 Спите и отдыхайте спокойно — бот отключил все уведомления на сегодня.\n"
+            f"💡 <i>Если передумаете, нажмите «💤 Не иду на пару», чтобы вернуться.</i>"
+        )
+
     def _format_pair_details(block: dict[str, Any]) -> str:
         lines = []
         for l in block["lessons"]:
@@ -965,6 +1019,23 @@ def get_current_pair_status_info(
 
     # 1. До начала всех пар
     if current_dt < first_block["start_dt"]:
+        # Ищем первую пару, на которую пользователь РЕАЛЬНО идет
+        first_active = next((b for b in pair_blocks if b["pair_number"] not in skipped_set), None)
+        if first_active and first_active["pair_number"] != first_block["pair_number"]:
+            mins_until = max(1, int((first_active["start_dt"] - current_dt).total_seconds() // 60))
+            h = mins_until // 60
+            m = mins_until % 60
+            time_str = f"{h} ч. {m} мин." if h > 0 else f"{m} мин."
+
+            return (
+                f"🌅 <b>Пары еще не начались!</b>\n"
+                f"👥 Группа: <code>{group_name}</code>\n"
+                f"💤 Вы пропускаете 1-ю пару (спите до {first_active['start_str']}).\n"
+                f"⏳ До вашей первой пары (№{first_active['pair_number']}) осталось: <b>{time_str}</b>\n\n"
+                f"🔜 <b>Ближайшая пара (№{first_active['pair_number']}, {first_active['start_str']}-{first_active['end_str']}):</b>\n"
+                f"{_format_pair_details(first_active)}"
+            )
+
         mins_until = max(1, int((first_block["start_dt"] - current_dt).total_seconds() // 60))
         h = mins_until // 60
         m = mins_until % 60
@@ -990,19 +1061,29 @@ def get_current_pair_status_info(
     # 3. Проверяем, идет ли сейчас пара или перемена
     for idx, block in enumerate(pair_blocks):
         if block["start_dt"] <= current_dt <= block["end_dt"]:
+            p_num = block["pair_number"]
             mins_left = max(1, int((block["end_dt"] - current_dt).total_seconds() // 60))
-            next_info = ""
-            if idx + 1 < len(pair_blocks):
-                next_b = pair_blocks[idx + 1]
+
+            # Ищем следующую пару, на которую студент идет
+            next_active = next((b for b in pair_blocks[idx + 1:] if b["pair_number"] not in skipped_set), None)
+            if next_active:
                 next_info = (
-                    f"\n🔜 <b>Следующая пара (№{next_b['pair_number']}, {next_b['start_str']}-{next_b['end_str']}):</b>\n"
-                    f"{_format_pair_details(next_b)}"
+                    f"\n🔜 <b>Следующая пара (№{next_active['pair_number']}, {next_active['start_str']}-{next_active['end_str']}):</b>\n"
+                    f"{_format_pair_details(next_active)}"
                 )
             else:
-                next_info = "\n🏁 <b>Это последняя пара на сегодня!</b>"
+                next_info = "\n🏁 <b>Это ваша последняя пара на сегодня!</b>"
+
+            if p_num in skipped_set:
+                return (
+                    f"💤 <b>Сейчас идет пара №{p_num} ({block['start_str']}-{block['end_str']}), но вы пропускаете её!</b>\n"
+                    f"👥 Группа: <code>{group_name}</code>\n"
+                    f"⏳ До конца этой пары: <b>{mins_left} мин.</b>\n"
+                    f"{next_info}"
+                )
 
             return (
-                f"🔴 <b>Сейчас идет пара №{block['pair_number']} ({block['start_str']}-{block['end_str']})</b>\n"
+                f"🔴 <b>Сейчас идет пара №{p_num} ({block['start_str']}-{block['end_str']})</b>\n"
                 f"👥 Группа: <code>{group_name}</code>\n"
                 f"⏳ До конца пары: <b>{mins_left} мин.</b> (звонок в {block['end_str']})\n\n"
                 f"{_format_pair_details(block)}\n"
@@ -1014,6 +1095,20 @@ def get_current_pair_status_info(
             if block["end_dt"] < current_dt < next_b["start_dt"]:
                 mins_left = max(1, int((next_b["start_dt"] - current_dt).total_seconds() // 60))
                 break_duration = max(1, int((next_b["start_dt"] - block["end_dt"]).total_seconds() // 60))
+
+                # Если студент пропускает следующую пару
+                if next_b["pair_number"] in skipped_set:
+                    next_active = next((b for b in pair_blocks[idx + 1:] if b["pair_number"] not in skipped_set), None)
+                    target_info = (
+                        f"💤 <i>Пару №{next_b['pair_number']} вы пропускаете.</i>\n"
+                        f"🔜 Ближайшая пара, на которую вы идете: №{next_active['pair_number']} в {next_active['start_str']}"
+                        if next_active else "🎉 <i>Больше занятий у вас на сегодня нет!</i>"
+                    )
+                    return (
+                        f"☕ <b>Сейчас перемена!</b> (длительность {break_duration} мин.)\n"
+                        f"👥 Группа: <code>{group_name}</code>\n\n"
+                        f"{target_info}"
+                    )
 
                 return (
                     f"☕ <b>Сейчас перемена!</b> (длительность {break_duration} мин.)\n"

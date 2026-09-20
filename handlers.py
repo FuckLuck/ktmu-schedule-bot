@@ -46,9 +46,11 @@ from keyboards import (
     NotesCallback,
     NotificationSettingCallback,
     ScheduleNavCallback,
+    SkipPairCallback,
     SpecialtyCallback,
     StarostaCallback,
     SubjectCallback,
+    SubgroupCallback,
     TeacherChoiceCallback,
     get_add_to_group_keyboard,
     get_admin_back_inline_keyboard,
@@ -81,8 +83,10 @@ from keyboards import (
     get_schedule_bonch_keyboard,
     get_schedule_nav_keyboard,
     get_settings_info_keyboard,
+    get_skip_pair_keyboard,
     get_specialties_inline_keyboard,
     get_starosta_inline_keyboard,
+    get_subgroup_selection_keyboard,
     get_teacher_cancel_keyboard,
     get_teacher_search_choice_keyboard,
     get_user_notes_delete_keyboard,
@@ -92,6 +96,7 @@ from i18n import get_text
 from image_generator import MONTHS_RU
 from timetable_parser import (
     MONTH_NAMES_GENITIVE,
+    filter_lessons_by_subgroup,
     format_day_schedule_message,
     format_week_schedule_messages,
     generate_ics_calendar,
@@ -902,6 +907,8 @@ async def send_day_schedule_with_image(
     notice_prefix: str = "",
     show_today_past: bool = False,
     is_group: bool = False,
+    user_subgroup: int = 0,
+    subgroup_overrides: Optional[dict[str, int]] = None,
 ) -> Optional[Message]:
     """
     Отправляет расписание на день сразу в виде графической карточки-изображения (PNG)
@@ -911,7 +918,9 @@ async def send_day_schedule_with_image(
     """
     date_str = target_date.isoformat()
     formatted_date = target_date.strftime("%d.%m.%Y")
-    sched_text = format_day_schedule_message(sched, group_name)
+    sched_text = format_day_schedule_message(
+        sched, group_name, user_subgroup=user_subgroup, subgroup_overrides=subgroup_overrides
+    )
     full_text = f"{notice_prefix}{sched_text}".strip()
 
     # Лимит подписи к фото в Telegram — 1024 символа
@@ -1084,6 +1093,8 @@ async def handle_schedule_today(message: Message, database: Database = default_d
             group_id=group_id, group_url=group_url, target_date=today
         )
         lessons = today_sched.get("lessons", [])
+        user_sub = user.get("subgroup", 0) if not is_group else 0
+        user_overrides = user.get("subgroup_overrides") if not is_group else None
 
         # Проверяем, завершились ли уже пары на сегодня
         if are_today_pairs_finished(lessons, now_dt):
@@ -1108,6 +1119,8 @@ async def handle_schedule_today(message: Message, database: Database = default_d
                 notice_prefix=notice,
                 show_today_past=bool(lessons),
                 is_group=is_group,
+                user_subgroup=user_sub,
+                subgroup_overrides=user_overrides,
             )
         else:
             await send_day_schedule_with_image(
@@ -1122,6 +1135,8 @@ async def handle_schedule_today(message: Message, database: Database = default_d
                 wait_message=wait_msg,
                 show_today_past=False,
                 is_group=is_group,
+                user_subgroup=user_sub,
+                subgroup_overrides=user_overrides,
             )
 
     except Exception as e:
@@ -1153,6 +1168,8 @@ async def handle_schedule_tomorrow(message: Message, database: Database = defaul
         sched = await timetable_parser.fetch_day_schedule(
             group_id=group_id, group_url=group_url, target_date=tomorrow
         )
+        user_sub = user.get("subgroup", 0) if not is_group else 0
+        user_overrides = user.get("subgroup_overrides") if not is_group else None
         await send_day_schedule_with_image(
             bot=message.bot,
             chat_id=message.chat.id,
@@ -1165,6 +1182,8 @@ async def handle_schedule_tomorrow(message: Message, database: Database = defaul
             wait_message=wait_msg,
             show_today_past=False,
             is_group=is_group,
+            user_subgroup=user_sub,
+            subgroup_overrides=user_overrides,
         )
     except Exception as e:
         logger.error("Ошибка получения расписания на завтра: %s", e, exc_info=True)
@@ -1228,6 +1247,8 @@ async def cb_schedule_nav(
                 group_id=group_id, group_url=group_url, target_date=target_date
             )
             thread_id = getattr(callback.message, "message_thread_id", None)
+            user_sub = user.get("subgroup", 0) if (user and not is_group) else 0
+            user_overrides = user.get("subgroup_overrides") if (user and not is_group) else None
             await send_day_schedule_with_image(
                 bot=callback.bot,
                 chat_id=callback.message.chat.id,
@@ -1239,6 +1260,8 @@ async def cb_schedule_nav(
                 message_thread_id=thread_id,
                 edit_message=callback.message,
                 is_group=is_group,
+                user_subgroup=user_sub,
+                subgroup_overrides=user_overrides,
             )
             await callback.answer()
 
@@ -1406,8 +1429,22 @@ async def handle_pair_now(message: Message, database: Database = default_db):
         today_sched = await timetable_parser.fetch_day_schedule(
             group_id=group_id, group_url=group_url, target_date=today
         )
+        is_group = message.chat.type in ("group", "supergroup")
+        user_id = message.from_user.id if not is_group else message.chat.id
+        skipped_pairs = await database.get_skipped_pairs(user_id, today.isoformat())
+        user_subgroup = user.get("subgroup", 0) if not is_group else 0
+        overrides = user.get("subgroup_overrides") if not is_group else None
+
+        filtered_sched = dict(today_sched)
+        filtered_sched["lessons"] = filter_lessons_by_subgroup(
+            today_sched.get("lessons", []), user_subgroup, overrides
+        )
         status_text = get_current_pair_status_info(
-            sched=today_sched, current_dt=now_dt, group_name=group_name, lang=lang
+            sched=filtered_sched,
+            current_dt=now_dt,
+            group_name=group_name,
+            lang=lang,
+            skipped_pairs=skipped_pairs,
         )
         await wait_msg.edit_text(status_text, parse_mode="HTML")
     except Exception as e:
@@ -4472,18 +4509,22 @@ async def cmd_settings_info_menu(message: Message, state: Optional[FSMContext] =
     text = (
         "⚙️ <b>Настройки и связь с автором</b>\n\n"
         "Выберите интересующий вас раздел с помощью кнопок ниже:\n"
-        "• <b>Язык:</b> сменить язык интерфейса бота (RU / EN)\n"
-        "• <b>Бот в группу:</b> добавить бота в беседу вашей студенческой группы\n"
-        "• <b>Связь с автором:</b> написать разработчику или сообщить об ошибке\n"
-        "• <b>Инструкция:</b> руководство пользователя по всем возможностям бота"
+        "• <b>👥 Моя подгруппа:</b> выбор 1-й / 2-й подгруппы для фильтрации пар\n"
+        "• <b>⚙️ Сменить группу:</b> выбор другой специальности и группы\n"
+        "• <b>🌐 Язык:</b> сменить язык интерфейса бота (RU / EN)\n"
+        "• <b>➕ Бот в группу:</b> добавить бота в беседу вашей группы\n"
+        "• <b>👨‍💻 Связь с автором:</b> написать разработчику или сообщить об ошибке\n"
+        "• <b>📖 Инструкция:</b> руководство пользователя по возможностям бота"
         if lang == "ru"
         else (
             "⚙️ <b>Settings & Info</b>\n\n"
             "Choose a section below:\n"
-            "• <b>Language:</b> change bot language\n"
-            "• <b>Bot to group:</b> add bot to your group chat\n"
-            "• <b>Contact author:</b> developer contacts and feedback\n"
-            "• <b>Guide:</b> user manual for bot features"
+            "• <b>👥 My subgroup:</b> choose 1st / 2nd subgroup\n"
+            "• <b>⚙️ Change group:</b> select a different specialty and group\n"
+            "• <b>🌐 Language:</b> change bot language\n"
+            "• <b>➕ Bot to group:</b> add bot to your group chat\n"
+            "• <b>👨‍💻 Contact author:</b> developer contacts and feedback\n"
+            "• <b>📖 Guide:</b> user manual for bot features"
         )
     )
     kb = get_settings_info_keyboard(lang=lang)
@@ -4602,3 +4643,216 @@ async def cb_notification_settings(
         await callback.message.edit_text(title, reply_markup=kb, parse_mode="HTML")
     except Exception:
         pass
+
+
+# -------------------------------------------------------------------------
+# ПРОПУСК ПАР / СОН И ВЫБОР ПОДГРУППЫ
+# -------------------------------------------------------------------------
+
+@router.message(F.text.in_({"💤 Не иду на пару", "💤 Skip pair / Sleep", "💤 Пропуск пар"}))
+@router.message(Command("skip_pair"))
+@router.message(Command("sleep"))
+async def handle_skip_pair_menu(message: Message, database: Database = default_db):
+    """
+    Интерактивное управление посещаемостью: пропуск конкретных пар или режим «Сплю до 2-й пары».
+    """
+    user = await _get_authorized_user(message, database)
+    if not user:
+        return
+
+    now_dt = get_current_college_time()
+    today = now_dt.date()
+    group_id = user["group_id"]
+    group_url = user["group_url"]
+    lang = user.get("language", "ru")
+    user_id = message.from_user.id
+
+    wait_msg = await message.answer("⏳ <i>Загружаю данные о парах...</i>", parse_mode="HTML")
+    try:
+        today_sched = await timetable_parser.fetch_day_schedule(
+            group_id=group_id, group_url=group_url, target_date=today
+        )
+        lessons = today_sched.get("lessons", [])
+
+        # Если пары на сегодня уже кончились или их нет вовсе, переключаемся на завтра
+        target_date = today
+        if are_today_pairs_finished(lessons, now_dt) or not lessons:
+            target_date = today + timedelta(days=1)
+            tomorrow_sched = await timetable_parser.fetch_day_schedule(
+                group_id=group_id, group_url=group_url, target_date=target_date
+            )
+            lessons = tomorrow_sched.get("lessons", [])
+
+        date_str = target_date.isoformat()
+        date_display = target_date.strftime("%d.%m.%Y")
+
+        user_subgroup = user.get("subgroup", 0)
+        overrides = user.get("subgroup_overrides") or {}
+        filtered_lessons = filter_lessons_by_subgroup(lessons, user_subgroup, overrides)
+
+        if not filtered_lessons:
+            await wait_msg.edit_text(
+                f"🎉 <b>На {date_display} пар нет!</b>\n\nМожно спокойно спать и отдыхать.",
+                parse_mode="HTML"
+            )
+            return
+
+        skipped_pairs = await database.get_skipped_pairs(user_id, date_str)
+        kb = get_skip_pair_keyboard(filtered_lessons, skipped_pairs, date_str, lang=lang)
+
+        msg_text = (
+            f"💤 <b>Настройка пропуска пар / Сон</b>\n\n"
+            f"📅 Дата: <b>{date_display}</b>\n\n"
+            "Нажмите на пару, чтобы отметить её как пропущенную (или вернуть).\n"
+            "• <i>Бот не будет присылать напоминания по пропущенным парам.</i>\n"
+            "• <i>Статус автоматически отображается в виджете «📍 Где сейчас пара?».</i>"
+            if lang == "ru"
+            else (
+                f"💤 <b>Skip Pairs / Sleep Mode</b>\n\n"
+                f"📅 Date: <b>{date_display}</b>\n\n"
+                "Tap on a class to toggle skip/attendance.\n"
+                "• <i>The bot won't send alerts for skipped classes.</i>\n"
+                "• <i>Status is updated in «📍 Where is pair now?».</i>"
+            )
+        )
+        await wait_msg.edit_text(msg_text, reply_markup=kb, parse_mode="HTML")
+    except Exception as e:
+        logger.error("Ошибка открытия меню пропуска пар: %s", e, exc_info=True)
+        await wait_msg.edit_text("❌ Не удалось загрузить данные. Пожалуйста, попробуйте позже.")
+
+
+@router.callback_query(SkipPairCallback.filter())
+async def cb_skip_pair(
+    callback: CallbackQuery, callback_data: SkipPairCallback, database: Database = default_db
+):
+    action = callback_data.action
+    user_id = callback.from_user.id
+    date_str = callback_data.date_str
+
+    if action == "close":
+        try:
+            await callback.message.delete()
+        except Exception:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.answer()
+        return
+
+    user = await database.get_user(user_id)
+    if not user:
+        await callback.answer("Ошибка: пользователь не найден")
+        return
+
+    group_id = user["group_id"]
+    group_url = user["group_url"]
+    lang = user.get("language", "ru")
+
+    try:
+        target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+    except Exception:
+        target_date = get_current_college_time().date()
+        date_str = target_date.isoformat()
+
+    if action == "toggle":
+        p_num = callback_data.pair_number
+        is_skipped = await database.toggle_skipped_pair(user_id, date_str, p_num)
+        status_msg = f"Пара {p_num}: " + ("пропуск 💤" if is_skipped else "иду ✅")
+        await callback.answer(status_msg)
+    elif action == "sleep_first":
+        p_num = callback_data.pair_number or 1
+        is_skipped = await database.toggle_skipped_pair(user_id, date_str, p_num)
+        status_msg = "Режим «Сплю до 2-й пары» " + ("включен 😴" if is_skipped else "выключен ⏰")
+        await callback.answer(status_msg)
+    elif action == "clear":
+        await database.clear_skipped_pairs(user_id, date_str)
+        await callback.answer("Все пары отмечены как посещаемые ✅")
+
+    # Перерисовываем клавиатуру
+    sched = await timetable_parser.fetch_day_schedule(
+        group_id=group_id, group_url=group_url, target_date=target_date
+    )
+    lessons = sched.get("lessons", [])
+    user_subgroup = user.get("subgroup", 0)
+    overrides = user.get("subgroup_overrides") or {}
+    filtered_lessons = filter_lessons_by_subgroup(lessons, user_subgroup, overrides)
+    skipped_pairs = await database.get_skipped_pairs(user_id, date_str)
+
+    kb = get_skip_pair_keyboard(filtered_lessons, skipped_pairs, date_str, lang=lang)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+
+
+@router.message(F.text.in_({"👥 Моя подгруппа", "👥 My subgroup"}))
+@router.message(Command("subgroup"))
+async def handle_subgroup_menu(message: Message, database: Database = default_db):
+    """
+    Выбор подгруппы пользователя (1, 2 или обе).
+    """
+    user = await _get_authorized_user(message, database)
+    if not user:
+        return
+
+    current_sub = user.get("subgroup", 0)
+    lang = user.get("language", "ru")
+    kb = get_subgroup_selection_keyboard(current_sub, lang=lang)
+
+    text = (
+        "👥 <b>Выбор вашей учебной подгруппы</b>\n\n"
+        "Укажите подгруппу, в которой вы учитесь, чтобы бот фильтровал пары:\n\n"
+        "• <b>1-я подгруппа</b> — отображать только занятия 1-й подгруппы и общие пары\n"
+        "• <b>2-я подгруппа</b> — отображать только занятия 2-й подгруппы и общие пары\n"
+        "• <b>Вся группа (обе)</b> — показывать все пары без разделения"
+        if lang == "ru"
+        else (
+            "👥 <b>Select your study subgroup</b>\n\n"
+            "Choose your subgroup to filter schedule and reminders:\n\n"
+            "• <b>1st subgroup</b> — show only 1st subgroup and common classes\n"
+            "• <b>2nd subgroup</b> — show only 2nd subgroup and common classes\n"
+            "• <b>Entire group (both)</b> — show all classes"
+        )
+    )
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.callback_query(SubgroupCallback.filter())
+async def cb_subgroup(
+    callback: CallbackQuery, callback_data: SubgroupCallback, database: Database = default_db
+):
+    action = callback_data.action
+    if action == "close":
+        try:
+            await callback.message.delete()
+        except Exception:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        await callback.answer()
+        return
+
+    new_sub = callback_data.subgroup
+    user_id = callback.from_user.id
+    user = await database.get_user(user_id)
+    lang = user.get("language", "ru") if user else "ru"
+
+    await database.set_user_subgroup(user_id, new_sub)
+
+    sub_label = (
+        "1-я подгруппа" if new_sub == 1 else ("2-я подгруппа" if new_sub == 2 else "Вся группа (обе)")
+    ) if lang == "ru" else (
+        "1st subgroup" if new_sub == 1 else ("2nd subgroup" if new_sub == 2 else "Entire group (both)")
+    )
+
+    kb = get_subgroup_selection_keyboard(new_sub, lang=lang)
+    text = (
+        f"✅ <b>Подгруппа успешно сохранена: {sub_label}!</b>\n\n"
+        "Теперь в расписании и напоминаниях перед парами будут учитываться только ваши пары."
+        if lang == "ru"
+        else (
+            f"✅ <b>Subgroup saved: {sub_label}!</b>\n\n"
+            "Schedule and class notifications will now be tailored to your subgroup."
+        )
+    )
+    try:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        pass
+    await callback.answer(f"Сохранено: {sub_label}")

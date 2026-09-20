@@ -227,12 +227,15 @@ def test_keyboards_builder():
     assert any("Назад в меню" in text for text in sched_buttons)
 
     # 4. Главное меню и Меню группы
+    # 4. Главное меню (чистый вид без звонков и старосты)
     from keyboards import get_group_menu_keyboard, get_settings_info_keyboard
     reply_kb = get_main_reply_keyboard(notifications_enabled=True)
-    assert len(reply_kb.keyboard) == 5
-    assert any("Меню группы" in btn.text for row in reply_kb.keyboard for btn in row)
+    assert len(reply_kb.keyboard) == 4
+    assert not any("Меню группы" in btn.text for row in reply_kb.keyboard for btn in row)
+    assert not any("Звонки" in btn.text for row in reply_kb.keyboard for btn in row)
     assert any("На сегодня" in btn.text for row in reply_kb.keyboard for btn in row)
-    assert any("Звонки" in btn.text for row in reply_kb.keyboard for btn in row)
+    assert any("Где сейчас пара?" in btn.text for row in reply_kb.keyboard for btn in row)
+    assert any("Не иду на пару" in btn.text for row in reply_kb.keyboard for btn in row)
     assert not any("Корпуса и кабинеты" in btn.text for row in reply_kb.keyboard for btn in row)
     assert any("ВКЛ" in btn.text for row in reply_kb.keyboard for btn in row)
     assert any("Поиск преподавателя" in btn.text for row in reply_kb.keyboard for btn in row)
@@ -240,6 +243,8 @@ def test_keyboards_builder():
 
     # Меню настроек и связи
     settings_kb = get_settings_info_keyboard(lang="ru")
+    assert any("Моя подгруппа" in btn.text for row in settings_kb.keyboard for btn in row)
+    assert any("Сменить группу" in btn.text for row in settings_kb.keyboard for btn in row)
     assert any("Язык" in btn.text for row in settings_kb.keyboard for btn in row)
     assert any("Инструкция" in btn.text for row in settings_kb.keyboard for btn in row)
     assert any("Связь с автором" in btn.text for row in settings_kb.keyboard for btn in row)
@@ -1890,7 +1895,8 @@ async def test_group_menu_navigation(test_db):
     kb_main = msg_back.answer.call_args[1]["reply_markup"]
     main_buttons = [btn.text for row in kb_main.keyboard for btn in row]
     assert any("На сегодня" in b for b in main_buttons)
-    assert any("Меню группы" in b for b in main_buttons)
+    assert any("Не иду на пару" in b for b in main_buttons)
+    assert not any("Меню группы" in b for b in main_buttons)
 
 
 @pytest.mark.asyncio
@@ -3005,5 +3011,240 @@ async def test_handlers_now_and_export_calendar(test_db):
         assert call_kwargs["chat_id"] == 777888
         assert "document" in call_kwargs
         assert "iCalendar" in call_kwargs["caption"]
+
+
+@pytest.mark.asyncio
+async def test_subgroups_and_skipped_pairs_db(test_db):
+    """Тест работы базы данных с подгруппами и пропуском пар."""
+    uid = 991122
+    await test_db.upsert_user(
+        user_id=uid,
+        group_id="grp_sub_test",
+        group_url="http://example.com",
+        group_name="1-ИС-99",
+    )
+
+    # 1. По умолчанию подгруппа 0 (обе)
+    sub, overrides = await test_db.get_user_subgroup(uid)
+    assert sub == 0
+    assert overrides == {}
+
+    # 2. Установка 1-й подгруппы
+    await test_db.set_user_subgroup(uid, 1)
+    sub, overrides = await test_db.get_user_subgroup(uid)
+    assert sub == 1
+
+    # Проверка через get_user
+    user = await test_db.get_user(uid)
+    assert user["subgroup"] == 1
+    assert user["subgroup_overrides"] == {}
+
+    # 3. Переопределения по предметам
+    await test_db.set_user_subgroup(uid, 1, overrides={"Физика": 2})
+    user = await test_db.get_user(uid)
+    assert user["subgroup_overrides"] == {"Физика": 2}
+
+    # 4. Пропуск пар
+    date_str = "2026-09-22"
+    assert not await test_db.is_pair_skipped(uid, date_str, 1)
+
+    # Тогл 1-й пары -> True
+    is_skipped = await test_db.toggle_skipped_pair(uid, date_str, 1)
+    assert is_skipped is True
+    assert await test_db.is_pair_skipped(uid, date_str, 1)
+
+    # Тогл 2-й пары -> True
+    await test_db.toggle_skipped_pair(uid, date_str, 2)
+    skipped = await test_db.get_skipped_pairs(uid, date_str)
+    assert set(skipped) == {1, 2}
+
+    # Тогл 1-й пары обратно -> False
+    is_skipped = await test_db.toggle_skipped_pair(uid, date_str, 1)
+    assert is_skipped is False
+    assert not await test_db.is_pair_skipped(uid, date_str, 1)
+    assert await test_db.get_skipped_pairs(uid, date_str) == [2]
+
+    # Очистка всех пропусков
+    await test_db.clear_skipped_pairs(uid, date_str)
+    assert await test_db.get_skipped_pairs(uid, date_str) == []
+
+
+def test_subgroup_filtering_and_format():
+    """Тест фильтрации занятий по подгруппам и форматирования."""
+    from timetable_parser import filter_lessons_by_subgroup, format_day_schedule_message
+
+    lessons = [
+        {"pair_number": 1, "subject": "Математика", "subgroup": 0, "room": "101"},
+        {"pair_number": 2, "subject": "Информатика", "subgroup": 1, "room": "201"},
+        {"pair_number": 2, "subject": "Информатика", "subgroup": 2, "room": "202"},
+        {"pair_number": 3, "subject": "Английский язык", "subgroup": 1, "room": "301"},
+        {"pair_number": 3, "subject": "Английский язык", "subgroup": 2, "room": "302"},
+    ]
+
+    # Для подгруппы 0 (все пары остаются)
+    f0 = filter_lessons_by_subgroup(lessons, 0)
+    assert len(f0) == 5
+
+    # Для 1-й подгруппы: общая математика + инфа 1 + англ 1 (всего 3)
+    f1 = filter_lessons_by_subgroup(lessons, 1)
+    assert len(f1) == 3
+    assert all(l.get("subgroup") in (0, 1) for l in f1)
+
+    # Для 2-й подгруппы: общая математика + инфа 2 + англ 2 (всего 3)
+    f2 = filter_lessons_by_subgroup(lessons, 2)
+    assert len(f2) == 3
+    assert all(l.get("subgroup") in (0, 2) for l in f2)
+
+    # С переопределением по предмету: студент в подгруппе 1, но Английский во 2-й
+    f1_override = filter_lessons_by_subgroup(lessons, 1, overrides={"Английский язык": 2})
+    assert len(f1_override) == 3
+    subgroups_in_res = [l["subgroup"] for l in f1_override]
+    assert 0 in subgroups_in_res  # Математика
+    assert 1 in subgroups_in_res  # Информатика (подгруппа 1)
+    assert 2 in subgroups_in_res  # Английский (переопределен на 2)
+
+    # Проверка форматирования с подгруппой
+    sched_data = {
+        "date": "2026-09-22",
+        "day_name": "Вторник",
+        "week_number": 4,
+        "is_even_week": False,
+        "lessons": lessons,
+    }
+    msg_formatted = format_day_schedule_message(sched_data, "1-ИС-99", user_subgroup=1)
+    assert "Подгруппа:</b> 1" in msg_formatted
+    assert "Математика" in msg_formatted
+    assert "Информатика" in msg_formatted
+
+
+def test_skip_pairs_status_info():
+    """Тест формирования статуса в виджете «📍 Где пара?» с учетом пропусков пар."""
+    from timetable_parser import get_current_pair_status_info
+
+    sched = {
+        "lessons": [
+            {
+                "pair_number": 1,
+                "subject": "Философия",
+                "room": "105",
+                "start_time": "08:30",
+                "end_time": "10:00",
+                "teacher": "Сократов С.С.",
+            },
+            {
+                "pair_number": 2,
+                "subject": "Программирование",
+                "room": "205",
+                "start_time": "10:10",
+                "end_time": "11:40",
+                "teacher": "Байтов Б.Б.",
+            }
+        ]
+    }
+
+    # 1. Время 08:00 (до начала занятий), 1-я пара пропущена -> режим «Сплю до 2-й пары»
+    early_dt = datetime(2026, 9, 22, 8, 0)
+    status_early = get_current_pair_status_info(
+        sched, early_dt, "1-ИС-99", skipped_pairs={1}
+    )
+    assert "спите до" in status_early or "пропускаете 1-ю пару" in status_early
+    assert "Программирование" in status_early
+
+    # 2. Время 08:45 (во время 1-й пары), 1-я пара пропущена -> статус отдыха/пропуска
+    during_1 = datetime(2026, 9, 22, 8, 45)
+    status_skipped = get_current_pair_status_info(
+        sched, during_1, "1-ИС-99", skipped_pairs={1}
+    )
+    assert "пропускаете" in status_skipped.lower() or "отдыхаете" in status_skipped.lower()
+    assert "Программирование" in status_skipped
+
+
+def test_subgroup_and_skip_keyboards():
+    """Тест генерации клавиатур подгруппы и пропуска пар."""
+    from keyboards import get_subgroup_selection_keyboard, get_skip_pair_keyboard
+
+    # Клавиатура подгрупп
+    kb_sub = get_subgroup_selection_keyboard(current_subgroup=1)
+    texts_sub = [btn.text for row in kb_sub.inline_keyboard for btn in row]
+    assert any("✅ 1-я подгруппа" in t for t in texts_sub)
+    assert any("2-я подгруппа" in t for t in texts_sub)
+    assert any("Вся группа" in t for t in texts_sub)
+
+    # Клавиатура пропуска пар
+    lessons = [
+        {"pair_number": 1, "subject": "Математика"},
+        {"pair_number": 2, "subject": "Физика"},
+    ]
+    kb_skip = get_skip_pair_keyboard(lessons, skipped_pairs={1}, date_str="2026-09-22")
+    texts_skip = [btn.text for row in kb_skip.inline_keyboard for btn in row]
+    assert any("💤 Пропуск | 1 пара" in t for t in texts_skip)
+    assert any("✅ Иду | 2 пара" in t for t in texts_skip)
+    assert any("Проснулся" in t for t in texts_skip)  # т.к. 1 пара пропущена
+    assert any("Иду на все пары" in t for t in texts_skip)
+
+
+@pytest.mark.asyncio
+async def test_subgroup_and_skip_pair_handlers(test_db):
+    """Тест хэндлеров меню подгруппы и пропуска пар."""
+    from aiogram.types import User, Chat, Message, CallbackQuery
+    from handlers import (
+        handle_subgroup_menu,
+        cb_subgroup,
+        handle_skip_pair_menu,
+        cb_skip_pair,
+        SubgroupCallback,
+        SkipPairCallback,
+    )
+
+    uid = 665544
+    await test_db.upsert_user(
+        user_id=uid,
+        group_id="test_grp",
+        group_url="http://test.com",
+        group_name="1-ИС-99",
+    )
+
+    # 1. handle_subgroup_menu
+    msg = MagicMock(spec=Message)
+    msg.from_user = User(id=uid, is_bot=False, first_name="Tester")
+    msg.chat = Chat(id=uid, type="private")
+    msg.message_thread_id = None
+    msg.answer = AsyncMock()
+
+    await handle_subgroup_menu(msg, database=test_db)
+    assert msg.answer.called
+    assert "Выбор вашей учебной подгруппы" in msg.answer.call_args[0][0]
+
+    # 2. cb_subgroup: выбор 2-й подгруппы
+    cb = MagicMock(spec=CallbackQuery)
+    cb.from_user = User(id=uid, is_bot=False, first_name="Tester")
+    cb.message = MagicMock(spec=Message)
+    cb.message.edit_text = AsyncMock()
+    cb.answer = AsyncMock()
+
+    await cb_subgroup(cb, SubgroupCallback(action="set", subgroup=2), database=test_db)
+    assert cb.answer.called
+    sub, _ = await test_db.get_user_subgroup(uid)
+    assert sub == 2
+
+    # 3. cb_skip_pair: toggle 1-й пары
+    sample_day = {
+        "lessons": [{"pair_number": 1, "subject": "Физика", "subgroup": 0}]
+    }
+    with patch("timetable_parser.timetable_parser.fetch_day_schedule", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = sample_day
+        cb_skip = MagicMock(spec=CallbackQuery)
+        cb_skip.from_user = User(id=uid, is_bot=False, first_name="Tester")
+        cb_skip.message = MagicMock(spec=Message)
+        cb_skip.message.edit_reply_markup = AsyncMock()
+        cb_skip.answer = AsyncMock()
+
+        await cb_skip_pair(
+            cb_skip,
+            SkipPairCallback(action="toggle", pair_number=1, date_str="2026-09-22"),
+            database=test_db
+        )
+        assert cb_skip.answer.called
+        assert await test_db.is_pair_skipped(uid, "2026-09-22", 1)
 
 

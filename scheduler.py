@@ -371,7 +371,24 @@ class NotificationScheduler:
         if not target_subscribers:
             return
 
+        today_str = self.get_current_date().isoformat()
+        pair_num = lesson.get("pair_number")
+        lesson_subgroup = lesson.get("subgroup")
+
         for cid, mtid in target_subscribers:
+            # Check if pair is skipped or subgroup filtered (for individual users cid > 0)
+            if cid > 0:
+                if pair_num and await self.db.is_pair_skipped(cid, today_str, pair_num):
+                    continue
+                user = await self.db.get_user(cid)
+                if user and lesson_subgroup and lesson_subgroup > 0:
+                    user_subgroup = user.get("subgroup", 0)
+                    overrides = user.get("subgroup_overrides") or {}
+                    subj = lesson.get("subject", "")
+                    effective_subgroup = overrides.get(subj, user_subgroup)
+                    if effective_subgroup > 0 and effective_subgroup != lesson_subgroup:
+                        continue
+
             await self._safe_send_message(cid, text, message_thread_id=mtid)
             await asyncio.sleep(0.04)
 

@@ -72,6 +72,22 @@ class Database:
                 await db.execute("ALTER TABLE users ADD COLUMN evening_notify_time TEXT DEFAULT '20:00';")
             if "morning_notify_time" not in columns:
                 await db.execute("ALTER TABLE users ADD COLUMN morning_notify_time TEXT DEFAULT '08:00';")
+            if "subgroup" not in columns:
+                await db.execute("ALTER TABLE users ADD COLUMN subgroup INTEGER DEFAULT 0;")
+            if "subgroup_overrides" not in columns:
+                await db.execute("ALTER TABLE users ADD COLUMN subgroup_overrides TEXT DEFAULT '{}';")
+
+            # Таблица пропущенных пар (сон / отметка 'не иду на пару')
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS skipped_pairs (
+                    user_id INTEGER NOT NULL,
+                    date TEXT NOT NULL,
+                    pair_number INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, date, pair_number)
+                );
+            """)
+            await db.execute("CREATE INDEX IF NOT EXISTS idx_skipped_pairs_user_date ON skipped_pairs(user_id, date);")
 
             # 2. Таблица chats (поддержка групп и тем/подразделов супергрупп)
             await db.execute("""
@@ -256,27 +272,119 @@ class Database:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
-                "SELECT user_id, group_id, group_url, group_name, notifications_enabled, username, first_name, created_at, last_active_at, language, notify_lead_minutes, evening_notify_time, morning_notify_time FROM users WHERE user_id = ?",
+                "SELECT * FROM users WHERE user_id = ?",
                 (user_id,)
             ) as cursor:
                 row = await cursor.fetchone()
                 if row:
-                    return {
-                        "user_id": row["user_id"],
-                        "group_id": row["group_id"],
-                        "group_url": row["group_url"],
-                        "group_name": row["group_name"],
-                        "notifications_enabled": bool(row["notifications_enabled"]),
-                        "username": row["username"],
-                        "first_name": row["first_name"],
-                        "created_at": row["created_at"],
-                        "last_active_at": row["last_active_at"],
-                        "language": row["language"] or "ru",
-                        "notify_lead_minutes": int(row["notify_lead_minutes"] or 0),
-                        "evening_notify_time": row["evening_notify_time"] or "20:00",
-                        "morning_notify_time": row["morning_notify_time"] or "08:00",
-                    }
+                    data = dict(row)
+                    data["notifications_enabled"] = bool(row["notifications_enabled"])
+                    data["language"] = row["language"] or "ru"
+                    data["notify_lead_minutes"] = int(row["notify_lead_minutes"] or 0)
+                    data["evening_notify_time"] = row["evening_notify_time"] or "20:00"
+                    data["morning_notify_time"] = row["morning_notify_time"] or "08:00"
+                    data["subgroup"] = int(row["subgroup"] or 0) if "subgroup" in row.keys() else 0
+                    raw_overrides = row["subgroup_overrides"] if "subgroup_overrides" in row.keys() else "{}"
+                    try:
+                        data["subgroup_overrides"] = json.loads(raw_overrides) if raw_overrides else {}
+                    except Exception:
+                        data["subgroup_overrides"] = {}
+                    return data
                 return None
+
+    async def set_user_subgroup(
+        self, user_id: int, subgroup: int, overrides: Optional[dict[str, int]] = None
+    ) -> None:
+        """
+        Устанавливает выбранную подгруппу пользователя (0 = обе, 1 = первая, 2 = вторая)
+        и опциональные персональные переопределения по предметам.
+        """
+        overrides_json = json.dumps(overrides or {}, ensure_ascii=False)
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                UPDATE users
+                SET subgroup = ?, subgroup_overrides = ?
+                WHERE user_id = ?
+            """, (subgroup, overrides_json, user_id))
+            await db.commit()
+
+    async def get_user_subgroup(self, user_id: int) -> tuple[int, dict[str, int]]:
+        """
+        Возвращает (subgroup, subgroup_overrides_dict) для пользователя.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT subgroup, subgroup_overrides FROM users WHERE user_id = ?", (user_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                if not row:
+                    return 0, {}
+                sub = int(row["subgroup"] or 0) if "subgroup" in row.keys() else 0
+                overrides_raw = row["subgroup_overrides"] if "subgroup_overrides" in row.keys() else "{}"
+                try:
+                    overrides = json.loads(overrides_raw) if overrides_raw else {}
+                except Exception:
+                    overrides = {}
+                return sub, overrides
+
+    async def toggle_skipped_pair(self, user_id: int, date_str: str, pair_number: int) -> bool:
+        """
+        Переключает статус пропуска пары (сон/пропуск):
+        Если пара уже пропущена — удаляет и возвращает False.
+        Если еще не пропущена — добавляет и возвращает True.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("""
+                SELECT 1 FROM skipped_pairs WHERE user_id = ? AND date = ? AND pair_number = ?
+            """, (user_id, date_str, pair_number)) as cursor:
+                exists = await cursor.fetchone()
+
+            if exists:
+                await db.execute("""
+                    DELETE FROM skipped_pairs WHERE user_id = ? AND date = ? AND pair_number = ?
+                """, (user_id, date_str, pair_number))
+                await db.commit()
+                return False
+            else:
+                await db.execute("""
+                    INSERT OR REPLACE INTO skipped_pairs (user_id, date, pair_number)
+                    VALUES (?, ?, ?)
+                """, (user_id, date_str, pair_number))
+                await db.commit()
+                return True
+
+    async def get_skipped_pairs(self, user_id: int, date_str: str) -> list[int]:
+        """
+        Возвращает список номеров пар, которые пользователь отметил как пропущенные на указанную дату.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("""
+                SELECT pair_number FROM skipped_pairs WHERE user_id = ? AND date = ? ORDER BY pair_number
+            """, (user_id, date_str)) as cursor:
+                rows = await cursor.fetchall()
+                return [int(r[0]) for r in rows]
+
+    async def is_pair_skipped(self, user_id: int, date_str: str, pair_number: int) -> bool:
+        """
+        Проверяет, отметил ли пользователь конкретную пару как пропущенную.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("""
+                SELECT 1 FROM skipped_pairs WHERE user_id = ? AND date = ? AND pair_number = ?
+            """, (user_id, date_str, pair_number)) as cursor:
+                row = await cursor.fetchone()
+                return bool(row)
+
+    async def clear_skipped_pairs(self, user_id: int, date_str: str) -> None:
+        """
+        Сбрасывает все пропуски пар пользователя на указанную дату.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                DELETE FROM skipped_pairs WHERE user_id = ? AND date = ?
+            """, (user_id, date_str))
+            await db.commit()
 
     async def get_user_by_username(self, username: str) -> Optional[dict[str, Any]]:
         """Находит пользователя по @username (без учета регистра и символа @)."""

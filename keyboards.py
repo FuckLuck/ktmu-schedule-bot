@@ -127,6 +127,17 @@ class NotificationSettingCallback(CallbackData, prefix="nset", sep="#"):
     value: str = ""
 
 
+class SubgroupCallback(CallbackData, prefix="subgrp"):
+    action: str  # "set", "close"
+    subgroup: int = 0  # 0 = обе, 1 = 1-я, 2 = 2-я
+
+
+class SkipPairCallback(CallbackData, prefix="skppr"):
+    action: str  # "toggle", "sleep_first", "clear", "close"
+    pair_number: int = 0
+    date_str: str = ""
+
+
 # -------------------------------------------------------------------------
 # Inline-клавиатуры для пошагового выбора
 # -------------------------------------------------------------------------
@@ -456,9 +467,8 @@ def get_main_reply_keyboard(
     """
     Основное меню бота с кнопками быстрого доступа к расписанию и настройкам:
     - Сегодня / Завтра
-    - Вся неделя / Звонки
-    - Выделенный пункт: 🎓 Меню группы (ДЗ / Староста)
-    - Поиск преподавателя / Корпуса и кабинеты
+    - Где сейчас пара? / На неделю
+    - Не иду на пару / Поиск преподавателя
     - Уведомления / Настройки и связь
     """
     builder = ReplyKeyboardBuilder()
@@ -477,16 +487,12 @@ def get_main_reply_keyboard(
         KeyboardButton(text="📍 Где сейчас пара?" if lang == "ru" else "📍 Where is pair now?"),
         KeyboardButton(text="🗓 На неделю" if lang == "ru" else "📆 Full Week"),
     )
-    # Ряд 3: Звонки / Поиск преподавателя
+    # Ряд 3: Пропуск пар / Поиск преподавателя
     builder.row(
-        KeyboardButton(text="⏰ Звонки" if lang == "ru" else "⏰ Bells"),
+        KeyboardButton(text="💤 Не иду на пару" if lang == "ru" else "💤 Skip pair / Sleep"),
         KeyboardButton(text="🔍 Поиск преподавателя" if lang == "ru" else "🔍 Teacher search"),
     )
-    # Ряд 4: Меню группы (ДЗ, Чат, Заметки, Староста, Смена группы)
-    builder.row(
-        KeyboardButton(text="🎓 Меню группы (ДЗ / Староста)" if lang == "ru" else "🎓 Group menu (HW / Starosta)")
-    )
-    # Ряд 5: Уведомления и подменю настроек/связи
+    # Ряд 4: Уведомления и подменю настроек/связи
     builder.row(
         KeyboardButton(text=notif_text),
         KeyboardButton(text="⚙️ Настройки и связь" if lang == "ru" else "⚙️ Settings & info"),
@@ -503,11 +509,16 @@ def get_main_reply_keyboard(
 def get_settings_info_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
     """
     Клавиатура подменю настроек, информации о боте и связи:
+    - 👥 Моя подгруппа | ⚙️ Сменить группу
     - 🌐 Язык | ℹ️ Бот в группу
     - 👨‍💻 Связь с автором | 📖 Инструкция
     - ⬅️ Главное меню
     """
     builder = ReplyKeyboardBuilder()
+    builder.row(
+        KeyboardButton(text="👥 Моя подгруппа" if lang == "ru" else "👥 My subgroup"),
+        KeyboardButton(text="⚙️ Сменить группу" if lang == "ru" else "⚙️ Change group"),
+    )
     builder.row(
         KeyboardButton(text="🌐 Язык" if lang == "ru" else "🌐 Language"),
         KeyboardButton(text="ℹ️ Бот в группу" if lang == "ru" else "➕ Bot to group"),
@@ -1403,3 +1414,109 @@ def get_morning_time_selection_keyboard(current_val: str, lang: str = "ru") -> I
         )
     )
     return builder.as_markup()
+
+
+def get_subgroup_selection_keyboard(current_subgroup: int = 0, lang: str = "ru") -> InlineKeyboardMarkup:
+    """Клавиатура выбора подгруппы студента."""
+    builder = InlineKeyboardBuilder()
+
+    opt1 = "✅ 1-я подгруппа" if current_subgroup == 1 else ("1-я подгруппа" if lang == "ru" else "1st subgroup")
+    opt2 = "✅ 2-я подгруппа" if current_subgroup == 2 else ("2-я подгруппа" if lang == "ru" else "2nd subgroup")
+    opt0 = "✅ Вся группа (обе)" if current_subgroup == 0 else ("Вся группа (обе)" if lang == "ru" else "Entire group (both)")
+
+    builder.row(
+        InlineKeyboardButton(
+            text=opt1,
+            callback_data=SubgroupCallback(action="set", subgroup=1).pack()
+        ),
+        InlineKeyboardButton(
+            text=opt2,
+            callback_data=SubgroupCallback(action="set", subgroup=2).pack()
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text=opt0,
+            callback_data=SubgroupCallback(action="set", subgroup=0).pack()
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="⬅️ Закрыть" if lang == "ru" else "⬅️ Close",
+            callback_data=SubgroupCallback(action="close", subgroup=current_subgroup).pack()
+        )
+    )
+    return builder.as_markup()
+
+
+def get_skip_pair_keyboard(
+    lessons: list[dict[str, Any]],
+    skipped_pairs: set[int],
+    date_str: str,
+    lang: str = "ru",
+) -> InlineKeyboardMarkup:
+    """
+    Клавиатура интерактивного выбора пропущенных пар на конкретную дату.
+    Показывает пары с чекбоксом (✅ Иду / 💤 Пропускаю), а также кнопку «😴 Сплю до 2-й пары».
+    """
+    builder = InlineKeyboardBuilder()
+
+    # Сгруппируем уникальные номера пар
+    unique_pairs: dict[int, str] = {}
+    for l in lessons:
+        p_num = l.get("pair_number")
+        if p_num is not None and p_num not in unique_pairs:
+            subj = l.get("subject", f"Пара {p_num}")
+            if len(subj) > 18:
+                subj = subj[:15] + "..."
+            unique_pairs[p_num] = subj
+
+    for p_num in sorted(unique_pairs.keys()):
+        subj = unique_pairs[p_num]
+        is_skipped = p_num in skipped_pairs
+        status_icon = "💤 Пропуск" if is_skipped else "✅ Иду"
+        btn_text = f"{status_icon} | {p_num} пара: {subj}"
+        builder.row(
+            InlineKeyboardButton(
+                text=btn_text,
+                callback_data=SkipPairCallback(
+                    action="toggle", pair_number=p_num, date_str=date_str
+                ).pack()
+            )
+        )
+
+    # Быстрые действия
+    has_first_pair = 1 in unique_pairs
+    if has_first_pair:
+        first_is_skipped = 1 in skipped_pairs
+        sleep_text = "⏰ Проснулся (иду на 1-ю)" if first_is_skipped else "😴 Сплю до 2-й пары"
+        builder.row(
+            InlineKeyboardButton(
+                text=sleep_text,
+                callback_data=SkipPairCallback(
+                    action="sleep_first", pair_number=1, date_str=date_str
+                ).pack()
+            )
+        )
+
+    if skipped_pairs:
+        builder.row(
+            InlineKeyboardButton(
+                text="🔄 Иду на все пары" if lang == "ru" else "🔄 Attending all classes",
+                callback_data=SkipPairCallback(
+                    action="clear", pair_number=0, date_str=date_str
+                ).pack()
+            )
+        )
+
+    builder.row(
+        InlineKeyboardButton(
+            text="⬅️ Закрыть" if lang == "ru" else "⬅️ Close",
+            callback_data=SkipPairCallback(
+                action="close", pair_number=0, date_str=date_str
+            ).pack()
+        )
+    )
+
+    return builder.as_markup()
+

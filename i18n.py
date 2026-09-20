@@ -48,6 +48,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "btn_add_to_group": {"ru": "➕ Добавить бота в группу", "en": "➕ Add bot to group"},
     "btn_now": {"ru": "📍 Где сейчас пара?", "en": "📍 Where is pair now?"},
     "btn_calendar": {"ru": "📅 В календарь (.ics)", "en": "📅 Export to Calendar (.ics)"},
+    "btn_skip_pair": {"ru": "💤 Не иду на пару", "en": "💤 Skip pair / Sleep"},
+    "btn_my_subgroup": {"ru": "👥 Моя подгруппа", "en": "👥 My subgroup"},
 
     # Домашнее задание
     "hw_title": {
