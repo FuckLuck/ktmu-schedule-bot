@@ -1538,6 +1538,8 @@ def pack_schedule_for_webapp(
     week_number: int = 1,
     is_even: bool = False,
     subgroup: int = 0,
+    user_id: Optional[int] = None,
+    skipped_pairs: Optional[list[str]] = None,
 ) -> str:
     """Упаковывает расписание группы в компактную base64url JSON строку для мгновенной загрузки в WebApp."""
     import base64
@@ -1563,13 +1565,18 @@ def pack_schedule_for_webapp(
             "lessons": lessons,
         })
 
-    payload = {
+    payload: dict[str, Any] = {
         "group_name": group_name,
         "week_number": week_number,
         "is_even": is_even,
         "subgroup": subgroup,
         "days": minimal_days,
     }
+    if user_id:
+        payload["user_id"] = user_id
+    if skipped_pairs:
+        payload["skipped_pairs"] = skipped_pairs
+
     raw_json = json.dumps(payload, ensure_ascii=False)
     b64 = base64.urlsafe_b64encode(raw_json.encode("utf-8")).decode("ascii")
     return b64.rstrip("=")
@@ -1582,6 +1589,8 @@ def build_webapp_url(
     week_number: int = 1,
     is_even: bool = False,
     base_url: Optional[str] = None,
+    user_id: Optional[int] = None,
+    skipped_pairs: Optional[list[str]] = None,
 ) -> str:
     """Строит полный HTTPS URL для Telegram WebApp с опциональным hash payload данных."""
     from config import Settings
@@ -1590,10 +1599,16 @@ def build_webapp_url(
         base_url = settings.WEBAPP_SCHEDULE_URL or "https://fuckluck.github.io/ktmu-schedule-bot/webapp/"
 
     if week_days:
-        b64_data = pack_schedule_for_webapp(week_days, group_name, week_number, is_even, subgroup)
+        b64_data = pack_schedule_for_webapp(
+            week_days, group_name, week_number, is_even, subgroup,
+            user_id=user_id, skipped_pairs=skipped_pairs
+        )
         return f"{base_url}#data={b64_data}"
 
-    return f"{base_url}?group={group_name}&subgroup={subgroup}"
+    query = f"?group={group_name}&subgroup={subgroup}"
+    if user_id:
+        query += f"&user_id={user_id}"
+    return f"{base_url}{query}"
 
 
 def get_webapp_inline_keyboard(url: str, lang: str = "ru") -> InlineKeyboardMarkup:

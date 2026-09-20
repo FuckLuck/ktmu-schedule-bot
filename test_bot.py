@@ -3379,3 +3379,161 @@ async def test_handle_open_webapp(test_db):
         assert any(b.web_app is not None for b in all_btns)
 
 
+@pytest.mark.asyncio
+async def test_monthly_skipped_stats_methods(test_db):
+    """Тест методов БД get_monthly_skipped_stats и get_users_with_skips_in_month."""
+    uid1 = 998811
+    uid2 = 998822
+
+    # Добавляем пропуски для uid1 в сентябре 2026
+    await test_db.toggle_skipped_pair(uid1, "2026-09-10", 1)
+    await test_db.toggle_skipped_pair(uid1, "2026-09-10", 2)
+    await test_db.toggle_skipped_pair(uid1, "2026-09-15", 3)
+    # Пропуск в августе 2026
+    await test_db.toggle_skipped_pair(uid1, "2026-08-28", 1)
+
+    # Пропуск для uid2 в сентябре
+    await test_db.toggle_skipped_pair(uid2, "2026-09-20", 2)
+
+    # Статистика за сентябрь 2026
+    stats_sep = await test_db.get_monthly_skipped_stats(uid1, "2026-09")
+    assert stats_sep["total_skipped_pairs"] == 3
+    assert stats_sep["total_academic_hours"] == 6
+    assert stats_sep["days_count"] == 2
+    assert len(stats_sep["days_detail"]) == 2
+
+    # Статистика за август 2026
+    stats_aug = await test_db.get_monthly_skipped_stats(uid1, "2026-08")
+    assert stats_aug["total_skipped_pairs"] == 1
+    assert stats_aug["total_academic_hours"] == 2
+
+    # Список пользователей с пропусками в сентябре
+    sep_users = await test_db.get_users_with_skips_in_month("2026-09")
+    assert uid1 in sep_users
+    assert uid2 in sep_users
+
+    # Список пользователей с пропусками в августе
+    aug_users = await test_db.get_users_with_skips_in_month("2026-08")
+    assert uid1 in aug_users
+    assert uid2 not in aug_users
+
+
+@pytest.mark.asyncio
+async def test_web_server_skip_endpoints(test_db):
+    """Тест API эндпоинтов /api/skip и /api/skips в aiohttp сервере."""
+    from web_server import create_web_app
+    from aiohttp.test_utils import TestClient, TestServer
+
+    app = create_web_app(test_db)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        uid = 887766
+        # Отмечаем пару пропущенной
+        post_data = {"user_id": uid, "date": "2026-09-25", "pair_number": 2}
+        resp = await client.post("/api/skip", json=post_data)
+        assert resp.status == 200
+        res = await resp.json()
+        assert res["status"] == "ok"
+        assert res["is_skipped"] is True
+        assert res["monthly_total"] == 1
+
+        # Отменяем пропуск
+        resp2 = await client.post("/api/skip", json=post_data)
+        assert resp2.status == 200
+        res2 = await resp2.json()
+        assert res2["is_skipped"] is False
+        assert res2["monthly_total"] == 0
+
+        # Запрос статистики пропусков
+        resp3 = await client.get(f"/api/skips?user_id={uid}&month=2026-09")
+        assert resp3.status == 200
+        res3 = await resp3.json()
+        assert res3["total_skipped_pairs"] == 0
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_handle_skips_stats_command(test_db):
+    """Тест хэндлера /skips и кнопки пропуска пар."""
+    from handlers import handle_skips_stats, cb_skip_date_today
+    from aiogram.types import User, Chat, Message, CallbackQuery
+
+    uid = 776655
+    await test_db.upsert_user(
+        user_id=uid,
+        group_id="grp_skips_test",
+        group_url="/test",
+        group_name="1-ТЕСТ-1",
+    )
+
+    msg = MagicMock(spec=Message)
+    msg.from_user = User(id=uid, is_bot=False, first_name="SkipTester")
+    msg.chat = Chat(id=uid, type="private")
+    msg.answer = AsyncMock()
+
+    # 1. При 0 пропусков: 100% посещаемость
+    await handle_skips_stats(msg, database=test_db)
+    assert msg.answer.called
+    text1 = msg.answer.call_args[0][0]
+    assert "Отличная посещаемость" in text1 or "не пропустили" in text1
+
+    # 2. Добавляем пропуск в текущем месяце
+    now_date = datetime.now().strftime("%Y-%m-%d")
+    await test_db.toggle_skipped_pair(uid, now_date, 1)
+
+    msg.answer.reset_mock()
+    await handle_skips_stats(msg, database=test_db)
+    text2 = msg.answer.call_args[0][0]
+    assert "Всего пропущено пар:</b> 1" in text2
+
+    # 3. Тест callback cb_skip_date_today
+    cb = MagicMock(spec=CallbackQuery)
+    cb.from_user = User(id=uid, is_bot=False, first_name="SkipTester")
+    cb.message = MagicMock(spec=Message)
+    cb.message.edit_text = AsyncMock()
+    cb.answer = AsyncMock()
+
+    with patch("timetable_parser.timetable_parser.fetch_day_schedule", new_callable=AsyncMock) as mock_day:
+        mock_day.return_value = {"lessons": [{"pair_number": 1, "subject": "Тест"}]}
+        await cb_skip_date_today(cb, database=test_db)
+        assert cb.message.edit_text.called
+        assert cb.answer.called
+
+
+@pytest.mark.asyncio
+async def test_monthly_skip_report_scheduler(test_db):
+    """Тест ежемесячной рассылки отчета посещаемости планировщика."""
+    from scheduler import NotificationScheduler
+
+    uid = 665544
+    await test_db.upsert_user(
+        user_id=uid,
+        group_id="grp_sched_skip",
+        group_url="/sched",
+        group_name="1-СХЕД-1",
+        notifications_enabled=True,
+    )
+
+    # Добавляем пропуски на предыдущий месяц
+    prev_month = (datetime.now().replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+    date_prev = f"{prev_month}-15"
+    await test_db.toggle_skipped_pair(uid, date_prev, 1)
+    await test_db.toggle_skipped_pair(uid, date_prev, 2)
+
+    bot_mock = MagicMock()
+    bot_mock.send_message = AsyncMock(return_value=True)
+
+    sched = NotificationScheduler(bot=bot_mock, database=test_db)
+    # Вызываем рассылку за предыдущий месяц
+    await sched.send_monthly_skipped_pairs_report(prev_month)
+
+    # Проверяем, что отчет отправлен
+    assert bot_mock.send_message.called
+    call_args = bot_mock.send_message.call_args[1]
+    assert call_args["chat_id"] == uid
+    assert "Итоги месяца" in call_args["text"]
+    assert "Всего пропущено пар:</b> 2" in call_args["text"]
+
+

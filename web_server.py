@@ -62,7 +62,96 @@ async def handle_get_schedule(request: web.Request) -> web.Response:
         })
     except Exception as e:
         logger.error("Ошибка API /api/schedule для %s: %s", group_id, e)
-        return web.json_response({"error": "failed to fetch schedule", "details": str(e)}, status=500)
+        return web.json_response(
+            {"error": "failed to fetch schedule", "details": str(e)},
+            status=500,
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+
+
+async def handle_toggle_skip(request: web.Request) -> web.Response:
+    """
+    API эндпоинт: переключение статуса пропуска пары студентом.
+    POST /api/skip
+    Body: {"user_id": int, "date": "YYYY-MM-DD", "pair_number": int}
+    """
+    db: Database = request.app.get("database", default_db)
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response(
+            {"error": "invalid json"},
+            status=400,
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+
+    user_id = data.get("user_id")
+    date_str = str(data.get("date", "")).strip()
+    pair_number = data.get("pair_number")
+
+    if not user_id or not date_str or pair_number is None:
+        return web.json_response(
+            {"error": "user_id, date, and pair_number required"},
+            status=400,
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+
+    try:
+        user_id = int(user_id)
+        pair_number = int(pair_number)
+    except (ValueError, TypeError):
+        return web.json_response(
+            {"error": "invalid user_id or pair_number"},
+            status=400,
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+
+    is_skipped = await db.toggle_skipped_pair(user_id, date_str, pair_number)
+    month_str = date_str[:7]
+    stats = await db.get_monthly_skipped_stats(user_id, month_str)
+
+    return web.json_response({
+        "status": "ok",
+        "user_id": user_id,
+        "date": date_str,
+        "pair_number": pair_number,
+        "is_skipped": is_skipped,
+        "monthly_total": stats.get("total_skipped_pairs", 0),
+        "monthly_hours": stats.get("total_academic_hours", 0)
+    }, headers={"Access-Control-Allow-Origin": "*"})
+
+
+async def handle_get_skips(request: web.Request) -> web.Response:
+    """
+    API эндпоинт: получение списка и статистики пропущенных пар студента.
+    GET /api/skips?user_id=123&month=YYYY-MM
+    """
+    db: Database = request.app.get("database", default_db)
+    user_id_raw = request.query.get("user_id", "").strip()
+    month = request.query.get("month", "").strip() or None
+
+    if not user_id_raw or not user_id_raw.isdigit():
+        return web.json_response(
+            {"error": "valid user_id required"},
+            status=400,
+            headers={"Access-Control-Allow-Origin": "*"}
+        )
+
+    user_id = int(user_id_raw)
+    stats = await db.get_monthly_skipped_stats(user_id, month)
+    return web.json_response(stats, headers={"Access-Control-Allow-Origin": "*"})
+
+
+async def handle_options(request: web.Request) -> web.Response:
+    """Обработчик CORS preflight OPTIONS запросов."""
+    return web.Response(
+        status=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        },
+    )
 
 
 def create_web_app(database: Optional[Database] = None) -> web.Application:
@@ -73,6 +162,9 @@ def create_web_app(database: Optional[Database] = None) -> web.Application:
     # API маршруты
     app.router.add_get("/health", handle_health)
     app.router.add_get("/api/schedule", handle_get_schedule)
+    app.router.add_post("/api/skip", handle_toggle_skip)
+    app.router.add_get("/api/skips", handle_get_skips)
+    app.router.add_route("OPTIONS", "/api/{tail:.*}", handle_options)
 
     # Раздача статики WebApp
     if WEBAPP_DIR.exists():

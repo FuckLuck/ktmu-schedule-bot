@@ -4759,16 +4759,29 @@ async def cb_skip_pair(
     if action == "toggle":
         p_num = callback_data.pair_number
         is_skipped = await database.toggle_skipped_pair(user_id, date_str, p_num)
-        status_msg = f"Пара {p_num}: " + ("пропуск 💤" if is_skipped else "иду ✅")
+        month_str = date_str[:7]
+        m_stats = await database.get_monthly_skipped_stats(user_id, month_str)
+        m_total = m_stats.get("total_skipped_pairs", 0)
+        status_msg = f"Пара {p_num}: " + (
+            f"пропуск 💤 (За месяц: {m_total})" if is_skipped else f"иду ✅ (За месяц: {m_total})"
+        )
         await callback.answer(status_msg)
     elif action == "sleep_first":
         p_num = callback_data.pair_number or 1
         is_skipped = await database.toggle_skipped_pair(user_id, date_str, p_num)
-        status_msg = "Режим «Сплю до 2-й пары» " + ("включен 😴" if is_skipped else "выключен ⏰")
+        month_str = date_str[:7]
+        m_stats = await database.get_monthly_skipped_stats(user_id, month_str)
+        m_total = m_stats.get("total_skipped_pairs", 0)
+        status_msg = (
+            f"«Сплю до 2-й пары» 😴 (За месяц: {m_total})" if is_skipped else f"«Сплю» выключен ⏰ (За месяц: {m_total})"
+        )
         await callback.answer(status_msg)
     elif action == "clear":
         await database.clear_skipped_pairs(user_id, date_str)
-        await callback.answer("Все пары отмечены как посещаемые ✅")
+        month_str = date_str[:7]
+        m_stats = await database.get_monthly_skipped_stats(user_id, month_str)
+        m_total = m_stats.get("total_skipped_pairs", 0)
+        await callback.answer(f"Все пары отмечены как посещаемые ✅ (За месяц: {m_total})")
 
     # Перерисовываем клавиатуру
     sched = await timetable_parser.fetch_day_schedule(
@@ -4877,6 +4890,7 @@ async def handle_open_webapp(message: Message, database: Database = default_db):
     if not user:
         return
 
+    user_id = message.from_user.id if message.from_user else 0
     group_id = user["group_id"]
     group_name = user["group_name"]
     group_url = user["group_url"]
@@ -4892,10 +4906,22 @@ async def handle_open_webapp(message: Message, database: Database = default_db):
     except Exception as e:
         logger.warning("Не удалось предзагрузить неделю для WebApp: %s", e)
 
+    # Загружаем пропуски на текущую неделю для мгновенной синхронизации в WebApp
+    skipped_list = []
+    if week_schedule:
+        for d in week_schedule:
+            d_date = d.get("date")
+            if d_date:
+                u_skips = await database.get_skipped_pairs(user_id, d_date)
+                for p_num in u_skips:
+                    skipped_list.append(f"{d_date}:{p_num}")
+
     webapp_url = build_webapp_url(
         group_name=group_name,
         subgroup=user_sub,
         week_days=week_schedule if week_schedule else None,
+        user_id=user_id,
+        skipped_pairs=skipped_list if skipped_list else None,
     )
 
     kb = get_webapp_inline_keyboard(webapp_url, lang=lang)
@@ -4903,19 +4929,169 @@ async def handle_open_webapp(message: Message, database: Database = default_db):
         f"📱 <b>Интерактивное расписание группы {group_name}</b>\n\n"
         "Нажмите кнопку ниже, чтобы открыть полноэкранный Mini App прямо в Telegram:\n"
         "• ⚡ Мгновенное переключение дней недели и свайпы\n"
-        "• 👥 Фильтрация по вашей подгруппе\n"
+        "• 💡 Информация о парах по подгруппам\n"
         "• 🟢 Live-таймер текущей пары и перемены\n"
-        "• 💤 Отметка пропуска пар в один клик\n"
+        "• 💤 Отметка пропуска пар в один клик и учет за месяц\n"
         "• 🔍 Быстрый поиск аудиторий и преподавателей"
         if lang == "ru"
         else (
             f"📱 <b>Interactive Schedule for {group_name}</b>\n\n"
             "Tap the button below to launch Telegram Mini App:\n"
             "• ⚡ Instant day switching and gestures\n"
-            "• 👥 Subgroup filtering\n"
+            "• 💡 Subgroup classes info banner\n"
             "• 🟢 Live class and break countdowns\n"
-            "• 💤 Toggle sleep/skip classes\n"
+            "• 💤 Toggle sleep/skip classes and monthly tracking\n"
             "• 🔍 Fast room and teacher search"
         )
     )
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+@router.message(F.text.in_({"📊 Мои пропуски", "📊 My skips", "📊 Пропуски", "📊 Пропуски за месяц"}))
+@router.message(Command("skips", "attendance"))
+async def handle_skips_stats(message: Message, database: Database = default_db):
+    """
+    Показывает статистику пропущенных пар студента за текущий месяц (и сравнение с предыдущим).
+    """
+    user = await _get_authorized_user(message, database)
+    if not user:
+        return
+
+    user_id = message.from_user.id
+    lang = user.get("language", "ru")
+    now = get_current_college_time()
+    current_month_str = now.strftime("%Y-%m")
+
+    month_names_ru = {
+        1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель", 5: "Май", 6: "Июнь",
+        7: "Июль", 8: "Август", 9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
+    }
+    month_name_ru = month_names_ru.get(now.month, now.strftime("%B"))
+
+    stats = await database.get_monthly_skipped_stats(user_id, current_month_str)
+    total_skipped = stats.get("total_skipped_pairs", 0)
+    total_hours = stats.get("total_academic_hours", 0)
+    days_count = stats.get("days_count", 0)
+    days_detail = stats.get("days_detail", [])
+
+    # Предыдущий месяц для сравнения
+    prev_month_date = now.replace(day=1) - timedelta(days=1)
+    prev_month_str = prev_month_date.strftime("%Y-%m")
+    prev_month_name = month_names_ru.get(prev_month_date.month, prev_month_date.strftime("%B"))
+    prev_stats = await database.get_monthly_skipped_stats(user_id, prev_month_str)
+    prev_total = prev_stats.get("total_skipped_pairs", 0)
+
+    if lang == "ru":
+        if total_skipped == 0:
+            text = (
+                f"🎉 <b>Отличная посещаемость!</b>\n\n"
+                f"🗓 Месяц: <b>{month_name_ru} {now.year}</b>\n"
+                f"💤 Вы не пропустили ни одной пары (100% посещаемость)!\n\n"
+                f"<i>В прошлом месяце ({prev_month_name}): {prev_total} пропусков.</i>\n"
+                "Так держать, отличный результат! 🎓"
+            )
+        else:
+            detail_lines = []
+            for d in days_detail:
+                try:
+                    d_dt = datetime.strptime(d["date"], "%Y-%m-%d")
+                    d_fmt = d_dt.strftime("%d.%m")
+                except Exception:
+                    d_fmt = d["date"]
+                pairs_str = ", ".join(f"№{p}" for p in d["pair_numbers"])
+                detail_lines.append(f"• <b>{d_fmt}</b>: пара {pairs_str}")
+
+            detail_text = "\n".join(detail_lines)
+            text = (
+                f"📊 <b>Статистика пропусков за {month_name_ru} {now.year}</b>\n\n"
+                f"💤 <b>Всего пропущено пар:</b> {total_skipped} ({total_hours} акад. ч.)\n"
+                f"📅 <b>Дней с пропусками:</b> {days_count}\n\n"
+                f"<b>Детализация по дням:</b>\n"
+                f"{detail_text}\n\n"
+                f"<i>В прошлом месяце ({prev_month_name}): {prev_total} пропусков.</i>"
+            )
+    else:
+        month_name_en = now.strftime("%B")
+        prev_month_name_en = prev_month_date.strftime("%B")
+        if total_skipped == 0:
+            text = (
+                f"🎉 <b>Perfect Attendance!</b>\n\n"
+                f"🗓 Month: <b>{month_name_en} {now.year}</b>\n"
+                f"💤 You haven't skipped any classes (100% attendance)!\n\n"
+                f"<i>Last month ({prev_month_name_en}): {prev_total} skips.</i>\n"
+                "Keep up the great work! 🎓"
+            )
+        else:
+            detail_lines = []
+            for d in days_detail:
+                pairs_str = ", ".join(f"#{p}" for p in d["pair_numbers"])
+                detail_lines.append(f"• <b>{d['date']}</b>: class {pairs_str}")
+            detail_text = "\n".join(detail_lines)
+            text = (
+                f"📊 <b>Skipped Classes Statistics ({month_name_en} {now.year})</b>\n\n"
+                f"💤 <b>Total skipped classes:</b> {total_skipped} ({total_hours} acad. hrs)\n"
+                f"📅 <b>Days with skips:</b> {days_count}\n\n"
+                f"<b>Breakdown by date:</b>\n"
+                f"{detail_text}\n\n"
+                f"<i>Last month ({prev_month_name_en}): {prev_total} skips.</i>"
+            )
+
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="💤 Отметить / изменить пропуск" if lang == "ru" else "💤 Toggle Skip Class",
+            callback_data="skip_date_today"
+        )
+    )
+    await message.answer(text, reply_markup=builder.as_markup(), parse_mode="HTML")
+
+
+@router.callback_query(F.data == "skip_date_today")
+async def cb_skip_date_today(callback: CallbackQuery, database: Database = default_db):
+    user_id = callback.from_user.id
+    user = await database.get_user(user_id)
+    if not user:
+        await callback.answer("Ошибка: пользователь не найден")
+        return
+
+    today = get_current_college_time().date()
+    target_date = today
+    if today.weekday() == 6:
+        target_date = today + timedelta(days=1)
+
+    group_id = user["group_id"]
+    group_url = user["group_url"]
+    lang = user.get("language", "ru")
+    date_str = target_date.isoformat()
+    date_display = target_date.strftime("%d.%m.%Y")
+
+    sched = await timetable_parser.fetch_day_schedule(
+        group_id=group_id, group_url=group_url, target_date=target_date
+    )
+    lessons = sched.get("lessons", [])
+    user_subgroup = user.get("subgroup", 0)
+    overrides = user.get("subgroup_overrides") or {}
+    filtered_lessons = filter_lessons_by_subgroup(lessons, user_subgroup, overrides)
+    skipped_pairs = await database.get_skipped_pairs(user_id, date_str)
+    kb = get_skip_pair_keyboard(filtered_lessons, skipped_pairs, date_str, lang=lang)
+
+    msg_text = (
+        f"💤 <b>Настройка пропуска пар / Сон</b>\n\n"
+        f"📅 Дата: <b>{date_display}</b>\n\n"
+        "Нажмите на пару, чтобы отметить её как пропущенную (или вернуть).\n"
+        "• <i>Бот не будет присылать напоминания по пропущенным парам.</i>\n"
+        "• <i>В конце месяца бот пришлет сводную статистику посещаемости.</i>"
+        if lang == "ru"
+        else (
+            f"💤 <b>Skip Pairs / Sleep Mode</b>\n\n"
+            f"📅 Date: <b>{date_display}</b>\n\n"
+            "Tap on a class to toggle skip/attendance.\n"
+            "• <i>The bot won't send alerts for skipped classes.</i>\n"
+            "• <i>Monthly attendance report will be sent at month end.</i>"
+        )
+    )
+    try:
+        await callback.message.edit_text(msg_text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        await callback.message.answer(msg_text, reply_markup=kb, parse_mode="HTML")
+    await callback.answer()

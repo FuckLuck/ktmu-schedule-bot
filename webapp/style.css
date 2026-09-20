@@ -188,43 +188,64 @@ body.light-theme .header {
 }
 
 /* ==========================================================================
-   Фильтр подгрупп (Subgroup Selector Pill Slider)
+   Желтая табличка о подгруппах (Yellow Notice Card)
    ========================================================================== */
-.subgroup-selector {
-  position: relative;
+.subgroup-notice-wrapper {
+  padding: 4px 16px 8px;
+}
+
+.subgroup-notice-card {
   display: flex;
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid var(--surface-border);
-  border-radius: var(--radius-full);
-  padding: 3px;
-  gap: 3px;
+  align-items: flex-start;
+  gap: 10px;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.12), rgba(217, 119, 6, 0.08));
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  box-shadow: 0 2px 10px rgba(245, 158, 11, 0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
-body.light-theme .subgroup-selector {
-  background: rgba(0, 0, 0, 0.05);
+body.light-theme .subgroup-notice-card {
+  background: linear-gradient(135deg, rgba(254, 243, 199, 0.9), rgba(253, 230, 138, 0.6));
+  border-color: rgba(245, 158, 11, 0.45);
+  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.08);
 }
 
-.subgroup-btn {
-  flex: 1;
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  font-family: var(--font-body);
-  font-size: 12px;
-  font-weight: 600;
-  padding: 6px 12px;
-  border-radius: var(--radius-full);
-  cursor: pointer;
-  transition: color var(--transition-smooth);
-  position: relative;
-  z-index: 2;
-  text-align: center;
+.notice-icon {
+  font-size: 16px;
+  line-height: 1.2;
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
-.subgroup-btn.active {
-  color: #ffffff;
-  background: linear-gradient(135deg, var(--accent-primary), var(--accent-primary-hover));
-  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+.notice-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notice-title {
+  font-family: var(--font-heading);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fbbf24;
+  letter-spacing: -0.2px;
+}
+
+body.light-theme .notice-title {
+  color: #b45309;
+}
+
+.notice-text {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #e2e8f0;
+}
+
+body.light-theme .notice-text {
+  color: #451a03;
 }
 
 /* ==========================================================================

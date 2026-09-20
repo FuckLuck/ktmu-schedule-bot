@@ -19,14 +19,16 @@
 
   // --- Состояние приложения ---
   const state = {
+    userId: null,
     groupName: '1-КПД-2',
     weekNumber: 4,
     isEvenWeek: false,
-    selectedSubgroup: 0, // 0 = Все, 1 = 1-я, 2 = 2-я
+    selectedSubgroup: 0, // 0 = Все
     selectedDayIndex: 0, // 0 = Пн, 1 = Вт, ...
     searchQuery: '',
     weekDays: [],
     skippedPairs: new Set(), // Набор "YYYY-MM-DD:pairNum"
+    monthlySkippedTotal: 0,
     timerInterval: null
   };
 
@@ -107,9 +109,85 @@
     state.weekNumber = data.week_number || 4;
     state.isEvenWeek = !!data.is_even;
     state.weekDays = data.days || [];
-    if (data.subgroup !== undefined) {
-      state.selectedSubgroup = parseInt(data.subgroup, 10) || 0;
+    if (data.user_id) {
+      state.userId = parseInt(data.user_id, 10);
+      try {
+        localStorage.setItem('ktmu_user_id', state.userId);
+      } catch (e) {}
     }
+    if (Array.isArray(data.skipped_pairs)) {
+      data.skipped_pairs.forEach(k => state.skippedPairs.add(k));
+      saveLocalSkips();
+    }
+  }
+
+  // --- Синхронизация пользователя и пропусков пар с ботом ---
+  function initUserSession() {
+    // 1. Telegram WebApp ID
+    if (tg?.initDataUnsafe?.user?.id) {
+      state.userId = tg.initDataUnsafe.user.id;
+    }
+    // 2. URL параметр ?user_id=...
+    if (!state.userId) {
+      const params = new URLSearchParams(window.location.search);
+      const uid = params.get('user_id');
+      if (uid && !isNaN(parseInt(uid, 10))) {
+        state.userId = parseInt(uid, 10);
+      }
+    }
+    // 3. Локальный кэш
+    if (!state.userId) {
+      const saved = localStorage.getItem('ktmu_user_id');
+      if (saved) state.userId = parseInt(saved, 10);
+    } else {
+      try {
+        localStorage.setItem('ktmu_user_id', state.userId);
+      } catch (e) {}
+    }
+
+    // Загрузка локальных пропусков
+    const local = localStorage.getItem('ktmu_skipped_pairs');
+    if (local) {
+      try {
+        const arr = JSON.parse(local);
+        if (Array.isArray(arr)) {
+          arr.forEach(k => state.skippedPairs.add(k));
+        }
+      } catch (e) {}
+    }
+
+    syncSkipsFromServer();
+  }
+
+  async function syncSkipsFromServer() {
+    if (!state.userId) return;
+    try {
+      const res = await fetch(`/api/skips?user_id=${state.userId}`);
+      if (res.ok) {
+        const data = await res.json();
+        state.monthlySkippedTotal = data.total_skipped_pairs || 0;
+        if (Array.isArray(data.days_detail)) {
+          data.days_detail.forEach(d => {
+            if (d.date && Array.isArray(d.pair_numbers)) {
+              d.pair_numbers.forEach(p => {
+                state.skippedPairs.add(`${d.date}:${p}`);
+              });
+            }
+          });
+          saveLocalSkips();
+          renderSchedule();
+          updateLiveWidget();
+        }
+      }
+    } catch (e) {
+      console.warn('Офлайн или сервер недоступен для синхронизации:', e);
+    }
+  }
+
+  function saveLocalSkips() {
+    try {
+      localStorage.setItem('ktmu_skipped_pairs', JSON.stringify(Array.from(state.skippedPairs)));
+    } catch (e) {}
   }
 
   function applyMockData() {
@@ -194,12 +272,6 @@
     document.getElementById('group-title').textContent = state.groupName;
     const parityText = state.isEvenWeek ? 'чётная' : 'нечётная';
     document.getElementById('week-badge').textContent = `Неделя ${state.weekNumber} • ${parityText}`;
-
-    // Активная кнопка подгруппы
-    document.querySelectorAll('.subgroup-btn').forEach(btn => {
-      const sub = parseInt(btn.getAttribute('data-subgroup'), 10);
-      btn.classList.toggle('active', sub === state.selectedSubgroup);
-    });
   }
 
   // --- Отрисовка ленты дней (Пн-Сб) ---
@@ -225,7 +297,7 @@
         }
       }
 
-      // Фильтрация пар под выбранную подгруппу для подсчета счетчика
+      // Подсчет количества пар
       const count = getFilteredLessons(dayData.lessons).length;
 
       pill.innerHTML = `
@@ -256,11 +328,6 @@
   function getFilteredLessons(lessons) {
     if (!lessons) return [];
     return lessons.filter(l => {
-      // Фильтр по подгруппе
-      const lSub = l.subgroup || 0;
-      if (state.selectedSubgroup > 0 && lSub > 0 && lSub !== state.selectedSubgroup) {
-        return false;
-      }
       // Фильтр по поисковому запросу
       if (state.searchQuery) {
         const q = state.searchQuery.toLowerCase();
@@ -355,17 +422,52 @@
 
     // Клик по кнопке пропуска пары
     const skipBtn = card.querySelector('.skip-toggle-btn');
-    skipBtn.addEventListener('click', () => {
+    skipBtn.addEventListener('click', async () => {
       triggerHaptic('impact');
-      if (state.skippedPairs.has(skipKey)) {
-        state.skippedPairs.delete(skipKey);
-        showToast(`Пара №${pairNum} отмечена как посещаемая ✅`);
-      } else {
+      const nowSkipped = !state.skippedPairs.has(skipKey);
+
+      if (nowSkipped) {
         state.skippedPairs.add(skipKey);
-        showToast(`Пара №${pairNum} отмечена как пропущенная 💤`);
+      } else {
+        state.skippedPairs.delete(skipKey);
       }
+      saveLocalSkips();
       renderSchedule();
       updateLiveWidget();
+
+      // Синхронизация с ботом через серверный API
+      if (state.userId) {
+        try {
+          const resp = await fetch('/api/skip', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              user_id: state.userId,
+              date: dateStr,
+              pair_number: pairNum
+            })
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            state.monthlySkippedTotal = data.monthly_total || 0;
+            if (data.is_skipped) {
+              showToast(`💤 Пара №${pairNum} пропущена (в этом месяце: ${data.monthly_total})`);
+            } else {
+              showToast(`✅ Пара №${pairNum} возвращена (в этом месяце: ${data.monthly_total})`);
+            }
+            return;
+          }
+        } catch (e) {
+          console.warn('Ошибка отправки статуса пропуска на сервер:', e);
+        }
+      }
+
+      // Локальный тост, если нет связи с бэкендом
+      if (nowSkipped) {
+        showToast(`Пара №${pairNum} отмечена как пропущенная 💤`);
+      } else {
+        showToast(`Пара №${pairNum} отмечена как посещаемая ✅`);
+      }
     });
 
     return card;
@@ -482,18 +584,6 @@
 
   // --- Обработчики событий ---
   function setupEventListeners() {
-    // Выбор подгруппы
-    document.querySelectorAll('.subgroup-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        triggerHaptic('selection');
-        state.selectedSubgroup = parseInt(btn.getAttribute('data-subgroup'), 10);
-        renderHeader();
-        renderDaysNav();
-        renderSchedule();
-        updateLiveWidget();
-      });
-    });
-
     // Поиск
     const searchInput = document.getElementById('search-input');
     const searchClear = document.getElementById('search-clear');
@@ -547,6 +637,7 @@
   // --- Инициализация приложения ---
   function init() {
     loadScheduleData();
+    initUserSession();
     state.selectedDayIndex = determineDefaultDayIndex();
     renderHeader();
     renderDaysNav();

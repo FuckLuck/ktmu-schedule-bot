@@ -31,14 +31,6 @@
           <span class="theme-icon">🌙</span>
         </button>
       </div>
-
-      <!-- Фильтр подгрупп -->
-      <div class="subgroup-selector" id="subgroup-selector">
-        <div class="selector-backdrop" id="selector-backdrop"></div>
-        <button class="subgroup-btn active" data-subgroup="0">👥 Все</button>
-        <button class="subgroup-btn" data-subgroup="1">1 подгруппа</button>
-        <button class="subgroup-btn" data-subgroup="2">2 подгруппа</button>
-      </div>
     </header>
 
     <!-- Горизонтальная лента дней недели (Пн-Сб) -->
@@ -47,6 +39,17 @@
         <!-- Генерируется динамически через JS -->
       </div>
     </nav>
+
+    <!-- Желтая информационная табличка о выборе подгруппы по предметам -->
+    <div class="subgroup-notice-wrapper">
+      <div class="subgroup-notice-card" id="subgroup-notice">
+        <span class="notice-icon">💡</span>
+        <div class="notice-content">
+          <span class="notice-title">Выберите подгруппу по некоторым предметам</span>
+          <span class="notice-text">Информатика, иностранный язык и лабораторные работы делятся на 1-ю и 2-ю подгруппы. Ориентируйтесь на свою подгруппу.</span>
+        </div>
+      </div>
+    </div>
 
     <!-- Live-виджет текущей пары (активен сегодня) -->
     <section class="live-widget" id="live-widget" style="display: none;">

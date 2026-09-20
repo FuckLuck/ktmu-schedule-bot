@@ -386,6 +386,64 @@ class Database:
             """, (user_id, date_str))
             await db.commit()
 
+    async def get_monthly_skipped_stats(
+        self, user_id: int, year_month: Optional[str] = None
+    ) -> dict[str, Any]:
+        """
+        Возвращает агрегированную статистику пропущенных пар студента за месяц (формат 'YYYY-MM').
+        Если year_month не передан, используется текущий месяц.
+        Результат:
+        {
+            "year_month": "2026-09",
+            "total_skipped_pairs": 6,
+            "total_academic_hours": 12,
+            "days_count": 3,
+            "days_detail": [{"date": "2026-09-15", "pair_numbers": [1, 2]}, ...]
+        }
+        """
+        if not year_month:
+            year_month = datetime.now().strftime("%Y-%m")
+
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("""
+                SELECT date, pair_number
+                FROM skipped_pairs
+                WHERE user_id = ? AND substr(date, 1, 7) = ?
+                ORDER BY date ASC, pair_number ASC
+            """, (user_id, year_month)) as cursor:
+                rows = await cursor.fetchall()
+
+        days_map: dict[str, list[int]] = {}
+        for r in rows:
+            d = r["date"]
+            p = int(r["pair_number"])
+            days_map.setdefault(d, []).append(p)
+
+        total_pairs = len(rows)
+        days_detail = [{"date": d, "pair_numbers": pairs} for d, pairs in days_map.items()]
+
+        return {
+            "year_month": year_month,
+            "total_skipped_pairs": total_pairs,
+            "total_academic_hours": total_pairs * 2,
+            "days_count": len(days_map),
+            "days_detail": days_detail
+        }
+
+    async def get_users_with_skips_in_month(self, year_month: str) -> list[int]:
+        """
+        Возвращает список ID пользователей, у которых есть хотя бы один пропуск за указанный месяц ('YYYY-MM').
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("""
+                SELECT DISTINCT user_id
+                FROM skipped_pairs
+                WHERE substr(date, 1, 7) = ?
+            """, (year_month,)) as cursor:
+                rows = await cursor.fetchall()
+                return [int(r[0]) for r in rows]
+
     async def get_user_by_username(self, username: str) -> Optional[dict[str, Any]]:
         """Находит пользователя по @username (без учета регистра и символа @)."""
         clean_username = username.lstrip("@").strip().lower()

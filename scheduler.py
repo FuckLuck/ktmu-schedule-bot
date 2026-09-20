@@ -624,6 +624,103 @@ class NotificationScheduler:
                 except Exception:
                     pass
 
+    async def send_monthly_skipped_pairs_report(self, year_month: Optional[str] = None) -> None:
+        """
+        Ежемесячная рассылка итоговой статистики посещаемости студентам за завершившийся месяц.
+        Запускается 1-го числа каждого месяца в 09:15.
+        Рассылает персональную статистику пропущенных пар студентам.
+        """
+        now = datetime.now(self.tz)
+        if not year_month:
+            if now.day == 1:
+                report_date = now.replace(day=1) - timedelta(days=1)
+            else:
+                report_date = now
+            year_month = report_date.strftime("%Y-%m")
+            year = report_date.year
+            month_int = report_date.month
+        else:
+            parts = year_month.split("-")
+            year = int(parts[0])
+            month_int = int(parts[1])
+
+        month_names_ru = {
+            1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель", 5: "Май", 6: "Июнь",
+            7: "Июль", 8: "Август", 9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
+        }
+        month_name = month_names_ru.get(month_int, str(month_int))
+
+        logger.info("Запуск ежемесячной рассылки статистики пропусков за %s (%s)...", month_name, year_month)
+
+        user_ids = await self.db.get_users_with_skips_in_month(year_month)
+        if not user_ids:
+            logger.info("Нет пользователей с пропусками за %s. Ежемесячная рассылка завершена.", year_month)
+            return
+
+        total_sent = 0
+        for uid in user_ids:
+            try:
+                user = await self.db.get_user(uid)
+                if not user or not user.get("notifications_enabled", True):
+                    continue
+
+                lang = user.get("language", "ru")
+                stats = await self.db.get_monthly_skipped_stats(uid, year_month)
+                total_skipped = stats.get("total_skipped_pairs", 0)
+                total_hours = stats.get("total_academic_hours", 0)
+                days_count = stats.get("days_count", 0)
+                days_detail = stats.get("days_detail", [])
+
+                if total_skipped == 0:
+                    continue
+
+                if lang == "ru":
+                    detail_lines = []
+                    for d in days_detail:
+                        try:
+                            d_dt = datetime.strptime(d["date"], "%Y-%m-%d")
+                            d_fmt = d_dt.strftime("%d.%m")
+                        except Exception:
+                            d_fmt = d["date"]
+                        pairs_str = ", ".join(f"№{p}" for p in d["pair_numbers"])
+                        detail_lines.append(f"• <b>{d_fmt}</b>: пара {pairs_str}")
+                    detail_text = "\n".join(detail_lines)
+
+                    msg = (
+                        f"📊 <b>Итоги месяца: статистика посещаемости</b>\n\n"
+                        f"🗓 Месяц: <b>{month_name} {year}</b>\n"
+                        f"💤 <b>Всего пропущено пар:</b> {total_skipped} ({total_hours} акад. часов)\n"
+                        f"📅 <b>Дней с пропусками:</b> {days_count}\n\n"
+                        f"<b>Детализация по дням:</b>\n"
+                        f"{detail_text}\n\n"
+                        "<i>Ведите учет посещаемости и закрывайте пропущенные темы вовремя! Желаем успехов в новом месяце! 🎓</i>"
+                    )
+                else:
+                    detail_lines = []
+                    for d in days_detail:
+                        pairs_str = ", ".join(f"#{p}" for p in d["pair_numbers"])
+                        detail_lines.append(f"• <b>{d['date']}</b>: class {pairs_str}")
+                    detail_text = "\n".join(detail_lines)
+
+                    msg = (
+                        f"📊 <b>Monthly Attendance Summary</b>\n\n"
+                        f"🗓 Month: <b>{report_date.strftime('%B')} {year}</b>\n"
+                        f"💤 <b>Total skipped classes:</b> {total_skipped} ({total_hours} acad. hrs)\n"
+                        f"📅 <b>Days with skips:</b> {days_count}\n\n"
+                        f"<b>Breakdown:</b>\n"
+                        f"{detail_text}\n\n"
+                        "<i>Keep track of your studies and good luck in the upcoming month! 🎓</i>"
+                    )
+
+                success = await self._safe_send_message(uid, msg)
+                if success:
+                    total_sent += 1
+                await asyncio.sleep(0.04)
+            except Exception as e:
+                logger.error("Ошибка отправки месячного отчета пользователю %d: %s", uid, e)
+
+        logger.info("Ежемесячная рассылка пропусков завершена. Отправлено отчетов: %d", total_sent)
+
     # -------------------------------------------------------------------------
     # ИНИЦИАЛИЗАЦИЯ И СТАРТ
     # -------------------------------------------------------------------------
@@ -708,6 +805,15 @@ class NotificationScheduler:
             self.send_weekly_db_backup,
             trigger=CronTrigger(day_of_week="sun", hour=4, minute=30, timezone=self.tz),
             id="weekly_db_backup_sunday_04_30",
+            replace_existing=True,
+            misfire_grace_time=3600,
+        )
+
+        # 9. Ежемесячный отчет по посещаемости 1-го числа каждого месяца в 09:15
+        self.scheduler.add_job(
+            self.send_monthly_skipped_pairs_report,
+            trigger=CronTrigger(day=1, hour=9, minute=15, timezone=self.tz),
+            id="monthly_skipped_pairs_report_01_09_15",
             replace_existing=True,
             misfire_grace_time=3600,
         )
