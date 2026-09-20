@@ -2,1088 +2,120 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>КТМУ — Навигатор по корпусу</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Расписание КТМУ | Telegram Mini App</title>
+  
+  <!-- Telegram WebApp SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <!-- Google Fonts: Outfit & Inter -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --bg-color: var(--tg-theme-bg-color, #0d1117);
-      --secondary-bg: var(--tg-theme-secondary-bg-color, #161b22);
-      --text-color: var(--tg-theme-text-color, #f0f6fc);
-      --hint-color: var(--tg-theme-hint-color, #8b949e);
-      --link-color: var(--tg-theme-link-color, #58a6ff);
-      --button-color: var(--tg-theme-button-color, #238636);
-      --button-text-color: var(--tg-theme-button-text-color, #ffffff);
-      --accent-cyan: #38bdf8;
-      --accent-purple: #a855f7;
-      --accent-amber: #f59e0b;
-      --accent-emerald: #10b981;
-      --accent-rose: #f43f5e;
-      --card-bg: rgba(22, 27, 34, 0.85);
-      --card-border: rgba(255, 255, 255, 0.1);
-      --room-default: #1e293b;
-      --room-stroke: #475569;
-      --room-hover: #334155;
-      --room-active: #38bdf8;
-    }
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      -webkit-tap-highlight-color: transparent;
-      user-select: none;
-    }
-
-    body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: radial-gradient(circle at 50% 0%, #1a2332 0%, var(--bg-color) 75%);
-      color: var(--text-color);
-      min-height: 100vh;
-      overflow-x: hidden;
-      padding-bottom: 90px;
-    }
-
-    /* HEADER */
-    header {
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      background: rgba(13, 17, 23, 0.82);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      border-bottom: 1px solid var(--card-border);
-      padding: 12px 16px;
-    }
-
-    .header-top {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 10px;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .brand-badge {
-      width: 38px;
-      height: 38px;
-      border-radius: 12px;
-      background: linear-gradient(135deg, #0284c7, #6366f1);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 20px;
-      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
-    }
-
-    .brand-text h1 {
-      font-family: 'Outfit', sans-serif;
-      font-size: 17px;
-      font-weight: 700;
-      letter-spacing: -0.2px;
-      color: #ffffff;
-    }
-
-    .brand-text p {
-      font-size: 11px;
-      color: var(--hint-color);
-    }
-
-    .live-clock {
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--accent-cyan);
-      background: rgba(56, 189, 248, 0.12);
-      padding: 4px 8px;
-      border-radius: 20px;
-      border: 1px solid rgba(56, 189, 248, 0.25);
-    }
-
-    /* SEARCH BAR */
-    .search-box {
-      position: relative;
-    }
-
-    .search-input {
-      width: 100%;
-      height: 42px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid var(--card-border);
-      border-radius: 12px;
-      padding: 0 40px 0 38px;
-      color: var(--text-color);
-      font-size: 14px;
-      outline: none;
-      transition: all 0.2s ease;
-    }
-
-    .search-input:focus {
-      background: rgba(255, 255, 255, 0.1);
-      border-color: var(--accent-cyan);
-      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.2);
-    }
-
-    .search-icon {
-      position: absolute;
-      left: 12px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: var(--hint-color);
-      pointer-events: none;
-    }
-
-    .search-clear {
-      position: absolute;
-      right: 12px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: none;
-      border: none;
-      color: var(--hint-color);
-      font-size: 16px;
-      cursor: pointer;
-      display: none;
-    }
-
-    /* CATEGORY CHIPS */
-    .chips-scroll {
-      display: flex;
-      gap: 8px;
-      overflow-x: auto;
-      padding: 10px 16px 4px;
-      scrollbar-width: none;
-    }
-    .chips-scroll::-webkit-scrollbar { display: none; }
-
-    .chip {
-      padding: 6px 12px;
-      border-radius: 20px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--card-border);
-      color: var(--text-color);
-      font-size: 12px;
-      font-weight: 500;
-      white-space: nowrap;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      transition: all 0.2s;
-    }
-
-    .chip.active {
-      background: linear-gradient(135deg, #0284c7, #2563eb);
-      color: #fff;
-      border-color: transparent;
-      box-shadow: 0 2px 10px rgba(2, 132, 199, 0.4);
-    }
-
-    /* FLOOR SELECTOR */
-    .floor-tabs {
-      display: flex;
-      gap: 8px;
-      padding: 10px 16px;
-      background: rgba(0, 0, 0, 0.2);
-      border-bottom: 1px solid var(--card-border);
-    }
-
-    .floor-btn {
-      flex: 1;
-      height: 38px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid var(--card-border);
-      border-radius: 10px;
-      color: var(--hint-color);
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-    }
-
-    .floor-btn.active {
-      background: linear-gradient(135deg, #0284c7, #0ea5e9);
-      color: #ffffff;
-      border-color: #38bdf8;
-      box-shadow: 0 3px 12px rgba(14, 165, 233, 0.35);
-    }
-
-    /* MAP CONTAINER */
-    .map-wrapper {
-      position: relative;
-      margin: 14px 16px;
-      background: rgba(15, 23, 42, 0.85);
-      border: 1px solid var(--card-border);
-      border-radius: 20px;
-      overflow: hidden;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-    }
-
-    .map-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--card-border);
-      background: rgba(255, 255, 255, 0.02);
-    }
-
-    .map-title {
-      font-size: 14px;
-      font-weight: 600;
-      color: #fff;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .map-controls {
-      display: flex;
-      gap: 6px;
-    }
-
-    .map-btn {
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid var(--card-border);
-      color: #fff;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      font-size: 14px;
-      transition: 0.15s;
-    }
-    .map-btn:hover { background: rgba(255, 255, 255, 0.15); }
-
-    .canvas-viewport {
-      width: 100%;
-      height: 340px;
-      position: relative;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      touch-action: none;
-    }
-
-    svg.floor-plan {
-      width: 100%;
-      height: 100%;
-      transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-    }
-
-    /* SVG ROOM STYLES */
-    .room {
-      cursor: pointer;
-      transition: all 0.2s ease;
-      stroke-width: 1.5;
-    }
-
-    .room-label {
-      font-family: 'Outfit', sans-serif;
-      font-size: 9px;
-      font-weight: 700;
-      fill: #e2e8f0;
-      pointer-events: none;
-      text-anchor: middle;
-      dominant-baseline: central;
-    }
-
-    .room-sub {
-      font-family: 'Inter', sans-serif;
-      font-size: 6.5px;
-      fill: #94a3b8;
-      pointer-events: none;
-      text-anchor: middle;
-      dominant-baseline: central;
-    }
-
-    /* ROOM THEMES */
-    .type-study { fill: #1e293b; stroke: #475569; }
-    .type-study:hover { fill: #334155; stroke: #38bdf8; }
-
-    .type-food { fill: #78350f; stroke: #f59e0b; }
-    .type-food:hover { fill: #92400e; }
-
-    .type-sport { fill: #064e3b; stroke: #10b981; }
-    .type-sport:hover { fill: #065f46; }
-
-    .type-admin { fill: #581c87; stroke: #c084fc; }
-    .type-admin:hover { fill: #6b21a8; }
-
-    .type-it { fill: #0c4a6e; stroke: #38bdf8; }
-    .type-it:hover { fill: #0369a1; }
-
-    .type-library { fill: #134e4a; stroke: #14b8a6; }
-    .type-library:hover { fill: #115e59; }
-
-    .type-med { fill: #881337; stroke: #f43f5e; }
-    .type-med:hover { fill: #9f1239; }
-
-    .room.selected {
-      stroke: #fbbf24 !important;
-      stroke-width: 3 !important;
-      filter: drop-shadow(0 0 10px rgba(251, 191, 36, 0.75));
-    }
-
-    .room.highlight {
-      animation: pulse 1.2s infinite alternate;
-    }
-
-    @keyframes pulse {
-      0% { stroke: #38bdf8; stroke-width: 2; }
-      100% { stroke: #fbbf24; stroke-width: 4; filter: drop-shadow(0 0 14px #fbbf24); }
-    }
-
-    /* QUICK DIRECTORY CARDS */
-    .section-title {
-      font-family: 'Outfit', sans-serif;
-      font-size: 15px;
-      font-weight: 700;
-      color: #fff;
-      margin: 18px 16px 8px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    .room-list {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      padding: 0 16px;
-    }
-
-    .room-card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 14px;
-      padding: 12px 14px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      cursor: pointer;
-      transition: all 0.2s ease;
-    }
-    .room-card:active {
-      transform: scale(0.98);
-      border-color: var(--accent-cyan);
-    }
-
-    .room-card-left {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .room-badge {
-      width: 40px;
-      height: 40px;
-      border-radius: 10px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 18px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--card-border);
-    }
-
-    .room-info h4 {
-      font-size: 14px;
-      font-weight: 600;
-      color: #fff;
-      margin-bottom: 3px;
-    }
-
-    .room-info p {
-      font-size: 11px;
-      color: var(--hint-color);
-    }
-
-    .room-floor-tag {
-      font-size: 11px;
-      font-weight: 600;
-      padding: 4px 8px;
-      border-radius: 8px;
-      background: rgba(56, 189, 248, 0.12);
-      color: var(--accent-cyan);
-    }
-
-    /* BOTTOM SHEET MODAL */
-    .sheet-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.7);
-      backdrop-filter: blur(6px);
-      z-index: 200;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.25s ease;
-    }
-    .sheet-overlay.active {
-      opacity: 1;
-      pointer-events: auto;
-    }
-
-    .bottom-sheet {
-      position: fixed;
-      bottom: 0;
-      left: 0;
-      right: 0;
-      background: #161f2e;
-      border-top: 1px solid var(--card-border);
-      border-radius: 24px 24px 0 0;
-      padding: 16px 20px 32px;
-      z-index: 201;
-      transform: translateY(100%);
-      transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-      box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.6);
-      max-height: 85vh;
-      overflow-y: auto;
-    }
-    .bottom-sheet.active {
-      transform: translateY(0);
-    }
-
-    .sheet-handle {
-      width: 40px;
-      height: 4px;
-      border-radius: 2px;
-      background: rgba(255, 255, 255, 0.2);
-      margin: 0 auto 16px;
-    }
-
-    .sheet-header {
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      margin-bottom: 12px;
-    }
-
-    .sheet-title h3 {
-      font-family: 'Outfit', sans-serif;
-      font-size: 18px;
-      font-weight: 700;
-      color: #fff;
-    }
-
-    .sheet-title span {
-      font-size: 12px;
-      color: var(--accent-cyan);
-      font-weight: 600;
-    }
-
-    .sheet-desc {
-      font-size: 13px;
-      line-height: 1.5;
-      color: #cbd5e1;
-      margin-bottom: 14px;
-    }
-
-    .sheet-tags {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-bottom: 18px;
-    }
-
-    .sheet-tag {
-      font-size: 11px;
-      padding: 4px 10px;
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.08);
-      color: #e2e8f0;
-      border: 1px solid var(--card-border);
-    }
-
-    .sheet-actions {
-      display: flex;
-      gap: 10px;
-    }
-
-    .sheet-btn {
-      flex: 1;
-      height: 44px;
-      border-radius: 12px;
-      border: none;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      transition: all 0.15s;
-    }
-
-    .sheet-btn-primary {
-      background: linear-gradient(135deg, #0284c7, #2563eb);
-      color: #fff;
-      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);
-    }
-
-    .sheet-btn-secondary {
-      background: rgba(255, 255, 255, 0.08);
-      color: #fff;
-      border: 1px solid var(--card-border);
-    }
-
-    /* EMPTY STATE */
-    .empty-state {
-      padding: 30px 20px;
-      text-align: center;
-      color: var(--hint-color);
-      display: none;
-    }
-    .empty-state span { font-size: 36px; display: block; margin-bottom: 8px; }
-  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div id="app-container">
+    <!-- Верхняя шапка приложения -->
+    <header class="header">
+      <div class="header-top">
+        <div class="college-brand">
+          <div class="brand-badge">КТМУ</div>
+          <div class="brand-info">
+            <h1 id="group-title" class="group-title">Загрузка...</h1>
+            <span id="week-badge" class="week-badge">Учебная неделя</span>
+          </div>
+        </div>
+        <button id="theme-toggle" class="icon-button" aria-label="Сменить тему" title="Сменить тему">
+          <span class="theme-icon">🌙</span>
+        </button>
+      </div>
 
-  <!-- HEADER -->
-  <header>
-    <div class="header-top">
-      <div class="brand">
-        <div class="brand-badge">🏛</div>
-        <div class="brand-text">
-          <h1>КТМУ Навигатор</h1>
-          <p>Интерактивная карта корпусов</p>
+      <!-- Фильтр подгрупп -->
+      <div class="subgroup-selector" id="subgroup-selector">
+        <div class="selector-backdrop" id="selector-backdrop"></div>
+        <button class="subgroup-btn active" data-subgroup="0">👥 Все</button>
+        <button class="subgroup-btn" data-subgroup="1">1 подгруппа</button>
+        <button class="subgroup-btn" data-subgroup="2">2 подгруппа</button>
+      </div>
+    </header>
+
+    <!-- Горизонтальная лента дней недели (Пн-Сб) -->
+    <nav class="days-nav-wrapper">
+      <div class="days-nav" id="days-nav">
+        <!-- Генерируется динамически через JS -->
+      </div>
+    </nav>
+
+    <!-- Live-виджет текущей пары (активен сегодня) -->
+    <section class="live-widget" id="live-widget" style="display: none;">
+      <div class="live-card">
+        <div class="live-glow"></div>
+        <div class="live-header">
+          <span class="live-status-pill" id="live-status-pill">
+            <span class="pulse-dot"></span> <span id="live-status-text">Идет пара</span>
+          </span>
+          <span class="live-countdown" id="live-countdown">--:--</span>
+        </div>
+        <div class="live-body">
+          <div class="live-pair-title" id="live-pair-title">Текущее занятие</div>
+          <div class="live-pair-meta" id="live-pair-meta">
+            <span class="live-room" id="live-room">Кабинет</span>
+            <span class="live-teacher" id="live-teacher">Преподаватель</span>
+          </div>
+        </div>
+        <div class="live-progress-container">
+          <div class="live-progress-bar" id="live-progress-bar" style="width: 0%;"></div>
         </div>
       </div>
-      <div class="live-clock" id="clock">00:00</div>
-    </div>
+    </section>
 
-    <!-- SEARCH -->
-    <div class="search-box">
-      <span class="search-icon">🔍</span>
-      <input type="text" id="searchInput" class="search-input" placeholder="Поиск: 304, столовая, спортзал, деканат...">
-      <button class="search-clear" id="searchClear">✕</button>
-    </div>
-  </header>
-
-  <!-- CATEGORY CHIPS -->
-  <div class="chips-scroll">
-    <div class="chip active" data-cat="all">🏢 Все</div>
-    <div class="chip" data-cat="food">🍽 Столовая</div>
-    <div class="chip" data-cat="sport">⚽ Спортзал</div>
-    <div class="chip" data-cat="admin">🏛 Деканат</div>
-    <div class="chip" data-cat="it">💻 IT-лабы</div>
-    <div class="chip" data-cat="library">📚 Библиотека</div>
-    <div class="chip" data-cat="med">🩺 Медпункт</div>
-  </div>
-
-  <!-- FLOOR SELECTOR -->
-  <div class="floor-tabs">
-    <button class="floor-btn active" data-floor="1">1 этаж</button>
-    <button class="floor-btn" data-floor="2">2 этаж</button>
-    <button class="floor-btn" data-floor="3">3 этаж</button>
-    <button class="floor-btn" data-floor="4">4 этаж</button>
-  </div>
-
-  <!-- INTERACTIVE MAP CONTAINER -->
-  <div class="map-wrapper">
-    <div class="map-header">
-      <div class="map-title" id="mapTitle">
-        <span>📍</span> <span id="currentFloorText">1 этаж — Главный корпус и спорткомплекс</span>
-      </div>
-      <div class="map-controls">
-        <button class="map-btn" id="zoomInBtn" title="Приблизить">＋</button>
-        <button class="map-btn" id="zoomOutBtn" title="Отдалить">－</button>
-        <button class="map-btn" id="zoomResetBtn" title="Сбросить">↺</button>
+    <!-- Поиск / фильтр предметов -->
+    <div class="search-container">
+      <div class="search-input-wrapper">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="search-input" placeholder="Поиск по предмету или преподавателю..." autocomplete="off">
+        <button id="search-clear" class="search-clear-btn" style="display: none;">✕</button>
       </div>
     </div>
 
-    <div class="canvas-viewport" id="viewport">
-      <!-- FLOOR 1 PLAN SVG -->
-      <svg id="svgFloor1" class="floor-plan" viewBox="0 0 500 300">
-        <!-- Floor Outline -->
-        <rect x="20" y="20" width="460" height="260" rx="14" fill="#0f172a" stroke="#334155" stroke-width="2"/>
-        
-        <!-- Central Hall & Entrance -->
-        <rect class="room type-study" id="r_entrance" data-id="entrance" x="190" y="230" width="120" height="48" rx="8"/>
-        <text class="room-label" x="250" y="250">🚪 Главный вход</text>
-        <text class="room-sub" x="250" y="263">Охрана и турникеты</text>
-
-        <!-- Wardrobe -->
-        <rect class="room type-study" id="r_wardrobe" data-id="wardrobe" x="190" y="150" width="120" height="65" rx="8"/>
-        <text class="room-label" x="250" y="180">🧥 Гардероб</text>
-        <text class="room-sub" x="250" y="195">Прием одежды</text>
-
-        <!-- Cafeteria & Buffet (Right Wing) -->
-        <rect class="room type-food" id="r_cafeteria" data-id="cafeteria" x="330" y="40" width="135" height="150" rx="10"/>
-        <text class="room-label" x="397" y="110">🍽 Столовая и буфет</text>
-        <text class="room-sub" x="397" y="128">Горячие обеды (09:00-16:30)</text>
-
-        <!-- Sports Gym (Left Wing) -->
-        <rect class="room type-sport" id="r_gym" data-id="gym" x="35" y="40" width="135" height="170" rx="10"/>
-        <text class="room-label" x="102" y="115">🏀 Спортзал</text>
-        <text class="room-sub" x="102" y="132">Тренажерка и раздевалки</text>
-
-        <!-- Medical Unit -->
-        <rect class="room type-med" id="r_104" data-id="104" x="330" y="210" width="135" height="65" rx="8"/>
-        <text class="room-label" x="397" y="240">🩺 Медпункт 104</text>
-        <text class="room-sub" x="397" y="254">Первая помощь, справки</text>
-
-        <!-- Workshops 110-115 -->
-        <rect class="room type-study" id="r_110" data-id="110" x="35" y="225" width="135" height="50" rx="8"/>
-        <text class="room-label" x="102" y="245">🔧 Мастерские 110-115</text>
-        <text class="room-sub" x="102" y="258">Слесарные и электромонтаж</text>
-      </svg>
-
-      <!-- FLOOR 2 PLAN SVG -->
-      <svg id="svgFloor2" class="floor-plan" viewBox="0 0 500 300" style="display: none;">
-        <rect x="20" y="20" width="460" height="260" rx="14" fill="#0f172a" stroke="#334155" stroke-width="2"/>
-        
-        <!-- Assembly Hall -->
-        <rect class="room type-admin" id="r_hall" data-id="hall" x="160" y="40" width="180" height="110" rx="10"/>
-        <text class="room-label" x="250" y="90">🎭 Актовый зал</text>
-        <text class="room-sub" x="250" y="106">Концерты и собрания</text>
-
-        <!-- Dean's Office 201 -->
-        <rect class="room type-admin" id="r_201" data-id="201" x="360" y="40" width="105" height="75" rx="8"/>
-        <text class="room-label" x="412" y="74">🏛 Деканат 201</text>
-        <text class="room-sub" x="412" y="88">Учебная часть</text>
-
-        <!-- Director's Office 204 -->
-        <rect class="room type-admin" id="r_204" data-id="204" x="360" y="130" width="105" height="65" rx="8"/>
-        <text class="room-label" x="412" y="160">👔 Директор 204</text>
-        <text class="room-sub" x="412" y="174">Приемная</text>
-
-        <!-- Teachers Room 208 -->
-        <rect class="room type-admin" id="r_208" data-id="208" x="360" y="210" width="105" height="65" rx="8"/>
-        <text class="room-label" x="412" y="240">👨‍🏫 Учительская 208</text>
-        <text class="room-sub" x="412" y="254">Преподавательская</text>
-
-        <!-- Lecture Rooms Left -->
-        <rect class="room type-study" id="r_202" data-id="202" x="35" y="40" width="105" height="65" rx="8"/>
-        <text class="room-label" x="87" y="72">Аудитория 202</text>
-
-        <rect class="room type-study" id="r_205" data-id="205" x="35" y="120" width="105" height="65" rx="8"/>
-        <text class="room-label" x="87" y="152">Аудитория 205</text>
-
-        <rect class="room type-study" id="r_215" data-id="215" x="35" y="200" width="105" height="75" rx="8"/>
-        <text class="room-label" x="87" y="235">Аудитория 215</text>
-        <text class="room-sub" x="87" y="249">Большой лекционный зал</text>
-
-        <!-- Corridor Room 210 -->
-        <rect class="room type-study" id="r_210" data-id="210" x="160" y="180" width="180" height="95" rx="8"/>
-        <text class="room-label" x="250" y="225">Аудитория 210</text>
-        <text class="room-sub" x="250" y="239">Семинарский зал</text>
-      </svg>
-
-      <!-- FLOOR 3 PLAN SVG -->
-      <svg id="svgFloor3" class="floor-plan" viewBox="0 0 500 300" style="display: none;">
-        <rect x="20" y="20" width="460" height="260" rx="14" fill="#0f172a" stroke="#334155" stroke-width="2"/>
-
-        <!-- Library & Coworking -->
-        <rect class="room type-library" id="r_301" data-id="301" x="35" y="40" width="145" height="235" rx="10"/>
-        <text class="room-label" x="107" y="150">📚 Библиотека 301</text>
-        <text class="room-sub" x="107" y="166">Читальный зал, Wi-Fi</text>
-
-        <!-- IT Labs 304, 306, 308 -->
-        <rect class="room type-it" id="r_304" data-id="304" x="200" y="40" width="125" height="105" rx="8"/>
-        <text class="room-label" x="262" y="88">💻 IT-лаборатория 304</text>
-        <text class="room-sub" x="262" y="103">Программирование</text>
-
-        <rect class="room type-it" id="r_306" data-id="306" x="345" y="40" width="120" height="105" rx="8"/>
-        <text class="room-label" x="405" y="88">💻 IT-лаборатория 306</text>
-        <text class="room-sub" x="405" y="103">Веб-дизайн и базы</text>
-
-        <rect class="room type-it" id="r_308" data-id="308" x="200" y="170" width="125" height="105" rx="8"/>
-        <text class="room-label" x="262" y="218">💻 Комп. класс 308</text>
-        <text class="room-sub" x="262" y="233">Сетевые технологии</text>
-
-        <!-- General Study 320 -->
-        <rect class="room type-study" id="r_320" data-id="320" x="345" y="170" width="120" height="105" rx="8"/>
-        <text class="room-label" x="405" y="218">Аудитория 320</text>
-        <text class="room-sub" x="405" y="233">Математика</text>
-      </svg>
-
-      <!-- FLOOR 4 PLAN SVG -->
-      <svg id="svgFloor4" class="floor-plan" viewBox="0 0 500 300" style="display: none;">
-        <rect x="20" y="20" width="460" height="260" rx="14" fill="#0f172a" stroke="#334155" stroke-width="2"/>
-
-        <!-- Physics Lab -->
-        <rect class="room type-it" id="r_402" data-id="402" x="35" y="40" width="135" height="130" rx="8"/>
-        <text class="room-label" x="102" y="98">⚡ Физика 402</text>
-        <text class="room-sub" x="102" y="114">Электротехника</text>
-
-        <!-- Chemistry Lab -->
-        <rect class="room type-sport" id="r_405" data-id="405" x="330" y="40" width="135" height="130" rx="8"/>
-        <text class="room-label" x="397" y="98">🧪 Химия 405</text>
-        <text class="room-sub" x="397" y="114">Биология и экология</text>
-
-        <!-- Study 401 -->
-        <rect class="room type-study" id="r_401" data-id="401" x="35" y="190" width="135" height="85" rx="8"/>
-        <text class="room-label" x="102" y="230">Аудитория 401</text>
-        <text class="room-sub" x="102" y="244">Специальные дисциплины</text>
-
-        <!-- Methodic 410 -->
-        <rect class="room type-admin" id="r_410" data-id="410" x="190" y="40" width="120" height="90" rx="8"/>
-        <text class="room-label" x="250" y="80">📋 Каб. 410</text>
-        <text class="room-sub" x="250" y="95">Методический кабинет</text>
-
-        <!-- Study 415 -->
-        <rect class="room type-study" id="r_415" data-id="415" x="190" y="150" width="275" height="125" rx="8"/>
-        <text class="room-label" x="327" y="210">Аудитория 415</text>
-        <text class="room-sub" x="327" y="225">Большая поточная аудитория</text>
-      </svg>
-    </div>
-  </div>
-
-  <!-- DIRECTORY LIST -->
-  <div class="section-title">
-    <span>Помещения на этаже</span>
-    <span style="font-size: 11px; color: var(--hint-color); font-weight: 400;" id="roomCount">6 помещений</span>
-  </div>
-
-  <div class="room-list" id="roomList">
-    <!-- Populated by JS -->
-  </div>
-
-  <div class="empty-state" id="emptyState">
-    <span>🔍</span>
-    Ничего не найдено по запросу.<br>Попробуйте другой номер аудитории.
-  </div>
-
-  <!-- BOTTOM SHEET MODAL -->
-  <div class="sheet-overlay" id="sheetOverlay"></div>
-  <div class="bottom-sheet" id="bottomSheet">
-    <div class="sheet-handle"></div>
-    <div class="sheet-header">
-      <div class="sheet-title">
-        <h3 id="modalName">Название кабинета</h3>
-        <span id="modalFloorWing">1 этаж • Правое крыло</span>
+    <!-- Список занятий на выбранный день -->
+    <main class="schedule-content">
+      <div class="day-header-info">
+        <h2 id="current-day-label" class="current-day-label">Понедельник</h2>
+        <span id="current-day-date" class="current-day-date">21 сентября</span>
       </div>
-    </div>
-    <p class="sheet-desc" id="modalDesc">Описание назначения кабинета...</p>
-    <div class="sheet-tags" id="modalTags">
-      <!-- Tags populated by JS -->
-    </div>
-    <div class="sheet-actions">
-      <button class="sheet-btn sheet-btn-primary" id="btnShare">📤 Поделиться</button>
-      <button class="sheet-btn sheet-btn-secondary" id="btnCloseSheet">Закрыть</button>
-    </div>
+
+      <div class="lessons-timeline" id="lessons-timeline">
+        <!-- Динамические карточки пар -->
+      </div>
+
+      <!-- Состояние отсутствия пар -->
+      <div class="empty-state" id="empty-state" style="display: none;">
+        <div class="empty-icon">🎉</div>
+        <h3 class="empty-title">В этот день пар нет!</h3>
+        <p class="empty-desc">Отличный повод отдохнуть или подготовиться к занятиям.</p>
+      </div>
+    </main>
+
+    <!-- Нижний информационный тулбар -->
+    <footer class="footer-bar">
+      <div class="footer-actions">
+        <button id="btn-share" class="footer-btn">
+          <span>📤</span> Поделиться
+        </button>
+        <button id="btn-refresh" class="footer-btn">
+          <span>🔄</span> Обновить
+        </button>
+      </div>
+      <p class="footer-note">Колледж телекоммуникаций СПбГУТ • Расписание пар</p>
+    </footer>
   </div>
 
-  <script>
-    // Initialize Telegram WebApp
-    const tg = window.Telegram ? window.Telegram.WebApp : null;
-    if (tg) {
-      tg.ready();
-      tg.expand();
-      if (tg.setHeaderColor) tg.setHeaderColor('#0d1117');
-      if (tg.setBackgroundColor) tg.setBackgroundColor('#0d1117');
-    }
+  <!-- Toast всплывающие уведомления -->
+  <div id="toast" class="toast"></div>
 
-    function triggerHaptic(type = 'light') {
-      if (tg && tg.HapticFeedback) {
-        tg.HapticFeedback.impactOccurred(type);
-      }
-    }
-
-    // COLLEGE ROOMS DATABASE
-    const ROOMS = [
-      // 1 FLOOR
-      { id: 'entrance', num: 'Вход', name: 'Центральный вход и проходная', floor: 1, wing: 'Центральный холл', type: 'study', icon: '🚪', desc: 'Главный проходной пункт с турникетами, пост дежурной охраны колледжа.', tags: ['Охрана', 'Турникеты', 'Пропускной режим'] },
-      { id: 'wardrobe', num: 'Гардероб', name: 'Гардероб колледжа', floor: 1, wing: 'Центральный вестибюль', type: 'study', icon: '🧥', desc: 'Прием и бережное хранение верхней одежды и сменной обуви учащихся.', tags: ['Верхняя одежда', 'Сменная обувь', 'Зона ожидания'] },
-      { id: 'cafeteria', num: 'Столовая', name: 'Столовая и студенческий буфет', floor: 1, wing: 'Правое крыло', type: 'food', icon: '🍽', desc: 'Горячее питание, комплексные обеды, свежая выпечка, кофе и чай. Работает с 09:00 до 16:30.', tags: ['Горячие обеды', 'Буфет', '09:00–16:30', 'Оплата картой'] },
-      { id: 'gym', num: 'Спортзал', name: 'Спортивный комплекс и тренажерный зал', floor: 1, wing: 'Левое крыло', type: 'sport', icon: '🏀', desc: 'Занятия физической культурой, спортивные секции волейбола и баскетбола, тренажеры, раздевалки.', tags: ['Физкультура', 'Баскетбол', 'Тренажеры', 'Душевые'] },
-      { id: '104', num: '104', name: 'Медицинский пункт (каб. 104)', floor: 1, wing: 'Около холла', type: 'med', icon: '🩺', desc: 'Оказание первой помощи, прием врача, регистрация и выдача справок о болезни.', tags: ['Первая помощь', 'Врач', 'Справки'] },
-      { id: '110', num: '110-115', name: 'Учебные мастерские (110–115)', floor: 1, wing: 'Коридор мастерских', type: 'study', icon: '🔧', desc: 'Практические и технические занятия: слесарные, электромонтажные и ремонтные работы.', tags: ['Станки', 'Практика', 'Электромонтаж'] },
-
-      // 2 FLOOR
-      { id: 'hall', num: 'Актовый', name: 'Актовый зал колледжа', floor: 2, wing: 'Центральное фойе', type: 'admin', icon: '🎭', desc: 'Место проведения торжественных линеек, концертов, конференций и студенческих праздников.', tags: ['Сцена', 'Проектор', '300 мест', 'Звуковое оборудование'] },
-      { id: '201', num: '201', name: 'Деканат / Учебная часть (каб. 201)', floor: 2, wing: 'Около центральной лестницы', type: 'admin', icon: '🏛', desc: 'Заказ справок об обучении, вопросы по расписанию, успеваемости, студенческим билетам.', tags: ['Справки', 'Студенческие билеты', 'Расписание'] },
-      { id: '204', num: '204', name: 'Кабинет директора и приемная (204)', floor: 2, wing: 'Центральное крыло', type: 'admin', icon: '👔', desc: 'Приемная руководства колледжа, прием студентов и родителей по предварительной записи.', tags: ['Дирекция', 'Приемная', 'Администрация'] },
-      { id: '208', num: '208', name: 'Преподавательская (каб. 208)', floor: 2, wing: 'Правое крыло', type: 'admin', icon: '👨‍🏫', desc: 'Рабочие места преподавателей, индивидуальные консультации со студентами перед зачетами.', tags: ['Преподаватели', 'Кафедра', 'Консультации'] },
-      { id: '202', num: '202', name: 'Аудитория 202', floor: 2, wing: 'Левое крыло', type: 'study', icon: '📖', desc: 'Лекционная аудитория для гуманитарных и общеобразовательных дисциплин.', tags: ['Проектор', 'Wi-Fi', 'Лекции'] },
-      { id: '205', num: '205', name: 'Аудитория 205', floor: 2, wing: 'Левое крыло', type: 'study', icon: '📖', desc: 'Учебный класс для практических занятий и семинаров.', tags: ['Интерактивная доска', 'Семинары'] },
-      { id: '210', num: '210', name: 'Аудитория 210', floor: 2, wing: 'Центральное крыло', type: 'study', icon: '📖', desc: 'Семинарский зал повышенной вместимости.', tags: ['Лекции', 'Семинары'] },
-      { id: '215', num: '215', name: 'Аудитория 215 (Большой лекционный зал)', floor: 2, wing: 'Левое крыло', type: 'study', icon: '🎓', desc: 'Амфитеатр для потоковых лекций двух и более академических групп.', tags: ['Амфитеатр', 'Потоковые лекции', 'Микрофон'] },
-
-      // 3 FLOOR
-      { id: '301', num: '301', name: 'Библиотека и читальный зал (301)', floor: 3, wing: 'Левое крыло', type: 'library', icon: '📚', desc: 'Выдача учебников, читальный зал с Wi-Fi, компьютеры для самостоятельной работы и подготовки.', tags: ['Учебники', 'Читальный зал', 'Wi-Fi', 'ПК для учебы'] },
-      { id: '304', num: '304', name: 'IT-лаборатория программирования (304)', floor: 3, wing: 'Правое крыло', type: 'it', icon: '💻', desc: 'Современные компьютеры, высокоскоростной интернет, разработка ПО и баз данных.', tags: ['ПК i7', 'Два монитора', 'Python/JS', 'Wi-Fi'] },
-      { id: '306', num: '306', name: 'IT-лаборатория веб-дизайна (306)', floor: 3, wing: 'Правое крыло', type: 'it', icon: '💻', desc: 'Графические планшеты, мониторы с точной цветопередачей, дизайн интерфейсов.', tags: ['Графические планшеты', 'Figma', 'Веб-разработка'] },
-      { id: '308', num: '308', name: 'Компьютерный класс сетевых систем (308)', floor: 3, wing: 'Центральное крыло', type: 'it', icon: '💻', desc: 'Сетевое оборудование Cisco/MikroTik, системное администрирование и кибербезопасность.', tags: ['Маршрутизаторы', 'Серверные стойки', 'Linux'] },
-      { id: '320', num: '320', name: 'Аудитория 320 (Математика)', floor: 3, wing: 'Правое крыло', type: 'study', icon: '📐', desc: 'Кабинет высшей математики и математической логики.', tags: ['Математика', 'Практика'] },
-
-      // 4 FLOOR
-      { id: '402', num: '402', name: 'Лаборатория физики и электротехники (402)', floor: 4, wing: 'Левое крыло', type: 'it', icon: '⚡', desc: 'Лабораторные стенды, осциллографы, практические работы по физике и электричеству.', tags: ['Осциллографы', 'Стенды', 'Электротехника'] },
-      { id: '405', num: '405', name: 'Лаборатория химии и экологии (405)', floor: 4, wing: 'Правое крыло', type: 'sport', icon: '🧪', desc: 'Вытяжные шкафы, реактивы, лабораторная посуда для химических и экологических опытов.', tags: ['Вытяжка', 'Реактивы', 'Химия/Биология'] },
-      { id: '410', num: '410', name: 'Методический кабинет (каб. 410)', floor: 4, wing: 'Центральное крыло', type: 'admin', icon: '📋', desc: 'Организация учебных планов, курсовых работ и методических пособий.', tags: ['Методисты', 'Учебные планы'] },
-      { id: '401', num: '401', name: 'Аудитория 401', floor: 4, wing: 'Левое крыло', type: 'study', icon: '📖', desc: 'Аудитория профильных дисциплин старших курсов.', tags: ['Спецкурсы', 'Проектор'] },
-      { id: '415', num: '415', name: 'Поточная аудитория 415', floor: 4, wing: 'Правое крыло', type: 'study', icon: '🎓', desc: 'Просторная светлая поточная аудитория с панорамными окнами.', tags: ['Большой экран', '120 мест'] },
-    ];
-
-    let currentFloor = 1;
-    let currentCategory = 'all';
-    let searchQuery = '';
-    let selectedRoomId = null;
-    let zoomLevel = 1;
-
-    // Floor descriptions
-    const FLOOR_NAMES = {
-      1: '1 этаж — Главный корпус, столовая и спортзал',
-      2: '2 этаж — Администрация, актовый зал и деканат',
-      3: '3 этаж — Библиотека и IT-лаборатории',
-      4: '4 этаж — Лаборатории физики и химии'
-    };
-
-    // Clock
-    function updateClock() {
-      const d = new Date();
-      const h = String(d.getHours()).padStart(2, '0');
-      const m = String(d.getMinutes()).padStart(2, '0');
-      document.getElementById('clock').textContent = `${h}:${m}`;
-    }
-    setInterval(updateClock, 1000);
-    updateClock();
-
-    // Switch floor
-    function setFloor(floorNum) {
-      triggerHaptic('light');
-      currentFloor = parseInt(floorNum);
-
-      document.querySelectorAll('.floor-btn').forEach(btn => {
-        btn.classList.toggle('active', parseInt(btn.dataset.floor) === currentFloor);
-      });
-
-      document.querySelectorAll('svg.floor-plan').forEach((svg, idx) => {
-        svg.style.display = (idx + 1 === currentFloor) ? 'block' : 'none';
-      });
-
-      document.getElementById('currentFloorText').textContent = FLOOR_NAMES[currentFloor];
-      resetZoom();
-      renderDirectory();
-    }
-
-    // Zoom controls
-    function setZoom(val) {
-      zoomLevel = Math.max(0.8, Math.min(2.5, val));
-      const activeSvg = document.getElementById(`svgFloor${currentFloor}`);
-      if (activeSvg) {
-        activeSvg.style.transform = `scale(${zoomLevel})`;
-      }
-    }
-
-    function resetZoom() {
-      zoomLevel = 1;
-      setZoom(1);
-    }
-
-    document.getElementById('zoomInBtn').onclick = () => setZoom(zoomLevel + 0.2);
-    document.getElementById('zoomOutBtn').onclick = () => setZoom(zoomLevel - 0.2);
-    document.getElementById('zoomResetBtn').onclick = resetZoom;
-
-    // Floor buttons
-    document.querySelectorAll('.floor-btn').forEach(btn => {
-      btn.onclick = () => setFloor(btn.dataset.floor);
-    });
-
-    // Category chips
-    document.querySelectorAll('.chip').forEach(chip => {
-      chip.onclick = () => {
-        triggerHaptic('light');
-        document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-        chip.classList.add('active');
-        currentCategory = chip.dataset.cat;
-        renderDirectory();
-      };
-    });
-
-    // Search
-    const searchInput = document.getElementById('searchInput');
-    const searchClear = document.getElementById('searchClear');
-
-    searchInput.addEventListener('input', (e) => {
-      searchQuery = e.target.value.trim().toLowerCase();
-      searchClear.style.display = searchQuery ? 'block' : 'none';
-
-      if (searchQuery) {
-        // Check if query matches any room on ANY floor
-        const match = ROOMS.find(r => 
-          r.num.toLowerCase().includes(searchQuery) || 
-          r.name.toLowerCase().includes(searchQuery) ||
-          r.desc.toLowerCase().includes(searchQuery)
-        );
-        if (match && match.floor !== currentFloor) {
-          setFloor(match.floor);
-        }
-      }
-
-      renderDirectory();
-      highlightMatchedRooms();
-    });
-
-    searchClear.onclick = () => {
-      searchInput.value = '';
-      searchQuery = '';
-      searchClear.style.display = 'none';
-      renderDirectory();
-      highlightMatchedRooms();
-    };
-
-    function highlightMatchedRooms() {
-      document.querySelectorAll('.room').forEach(el => el.classList.remove('highlight'));
-      if (!searchQuery) return;
-
-      ROOMS.filter(r => r.floor === currentFloor && (
-        r.num.toLowerCase().includes(searchQuery) || 
-        r.name.toLowerCase().includes(searchQuery) ||
-        r.desc.toLowerCase().includes(searchQuery)
-      )).forEach(r => {
-        const el = document.getElementById(`r_${r.id}`);
-        if (el) el.classList.add('highlight');
-      });
-    }
-
-    // Render directory list
-    function renderDirectory() {
-      const listEl = document.getElementById('roomList');
-      const emptyEl = document.getElementById('emptyState');
-      const countEl = document.getElementById('roomCount');
-      listEl.innerHTML = '';
-
-      let filtered = ROOMS.filter(r => r.floor === currentFloor);
-
-      if (currentCategory !== 'all') {
-        filtered = filtered.filter(r => r.type === currentCategory);
-      }
-
-      if (searchQuery) {
-        filtered = filtered.filter(r => 
-          r.num.toLowerCase().includes(searchQuery) || 
-          r.name.toLowerCase().includes(searchQuery) ||
-          r.desc.toLowerCase().includes(searchQuery) ||
-          r.tags.some(t => t.toLowerCase().includes(searchQuery))
-        );
-      }
-
-      countEl.textContent = `${filtered.length} помещений`;
-
-      if (filtered.length === 0) {
-        emptyEl.style.display = 'block';
-        return;
-      }
-      emptyEl.style.display = 'none';
-
-      filtered.forEach(room => {
-        const card = document.createElement('div');
-        card.className = 'room-card';
-        card.innerHTML = `
-          <div class="room-card-left">
-            <div class="room-badge">${room.icon}</div>
-            <div class="room-info">
-              <h4>${room.name}</h4>
-              <p>${room.wing}</p>
-            </div>
-          </div>
-          <div class="room-floor-tag">${room.floor} этаж</div>
-        `;
-        card.onclick = () => selectRoom(room);
-        listEl.appendChild(card);
-      });
-    }
-
-    // Select room on map or in list
-    function selectRoom(room) {
-      triggerHaptic('medium');
-      selectedRoomId = room.id;
-
-      if (room.floor !== currentFloor) {
-        setFloor(room.floor);
-      }
-
-      // Highlight SVG
-      document.querySelectorAll('.room').forEach(el => el.classList.remove('selected'));
-      const svgEl = document.getElementById(`r_${room.id}`);
-      if (svgEl) {
-        svgEl.classList.add('selected');
-      }
-
-      // Show bottom sheet
-      openBottomSheet(room);
-    }
-
-    // Bottom Sheet
-    const sheetOverlay = document.getElementById('sheetOverlay');
-    const bottomSheet = document.getElementById('bottomSheet');
-
-    function openBottomSheet(room) {
-      document.getElementById('modalName').textContent = room.name;
-      document.getElementById('modalFloorWing').textContent = `${room.floor} этаж • ${room.wing}`;
-      document.getElementById('modalDesc').textContent = room.desc;
-
-      const tagsEl = document.getElementById('modalTags');
-      tagsEl.innerHTML = '';
-      room.tags.forEach(t => {
-        const span = document.createElement('span');
-        span.className = 'sheet-tag';
-        span.textContent = `✓ ${t}`;
-        tagsEl.appendChild(span);
-      });
-
-      sheetOverlay.classList.add('active');
-      bottomSheet.classList.add('active');
-    }
-
-    function closeBottomSheet() {
-      triggerHaptic('light');
-      sheetOverlay.classList.remove('active');
-      bottomSheet.classList.remove('active');
-      document.querySelectorAll('.room').forEach(el => el.classList.remove('selected'));
-    }
-
-    document.getElementById('btnCloseSheet').onclick = closeBottomSheet;
-    sheetOverlay.onclick = closeBottomSheet;
-
-    // Share button
-    document.getElementById('btnShare').onclick = () => {
-      triggerHaptic('heavy');
-      const room = ROOMS.find(r => r.id === selectedRoomId);
-      if (!room) return;
-
-      const shareText = `📍 ${room.name} (${room.floor} этаж, ${room.wing})\n${room.desc}`;
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(shareText);
-      }
-      if (tg && tg.showPopup) {
-        tg.showPopup({ title: 'Готово!', message: 'Описание кабинета скопировано!', buttons: [{ type: 'ok' }] });
-      } else {
-        alert('Информация о кабинете скопирована!');
-      }
-    };
-
-    // Attach click listeners to SVG rooms
-    document.querySelectorAll('.room').forEach(rect => {
-      rect.addEventListener('click', (e) => {
-        const id = rect.dataset.id;
-        const room = ROOMS.find(r => r.id === id);
-        if (room) selectRoom(room);
-      });
-    });
-
-    // Initial render
-    setFloor(1);
-  </script>
+  <script src="app.js"></script>
 </body>
 </html>

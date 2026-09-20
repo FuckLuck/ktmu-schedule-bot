@@ -52,6 +52,7 @@ from keyboards import (
     SubjectCallback,
     SubgroupCallback,
     TeacherChoiceCallback,
+    build_webapp_url,
     get_add_to_group_keyboard,
     get_admin_back_inline_keyboard,
     get_admin_main_inline_keyboard,
@@ -91,6 +92,7 @@ from keyboards import (
     get_teacher_search_choice_keyboard,
     get_user_notes_delete_keyboard,
     get_user_notes_keyboard,
+    get_webapp_inline_keyboard,
 )
 from i18n import get_text
 from image_generator import MONTHS_RU
@@ -929,11 +931,13 @@ async def send_day_schedule_with_image(
     else:
         caption = f"{notice_prefix}🗓 <b>Расписание группы {group_name}</b> на {formatted_date}".strip()
 
+    webapp_url = build_webapp_url(group_name=group_name, subgroup=user_subgroup)
     kb = get_schedule_bonch_keyboard(
         target_date=target_date,
         show_back_to_menu=not is_group,
         show_today_past=show_today_past,
         show_calendar=True,
+        webapp_url=webapp_url,
     )
 
     # 1. Проверяем кэш file_id (в RAM, затем в БД)
@@ -4856,3 +4860,62 @@ async def cb_subgroup(
     except Exception:
         pass
     await callback.answer(f"Сохранено: {sub_label}")
+
+
+# -------------------------------------------------------------------------
+# TELEGRAM MINI APP (WEBAPP)
+# -------------------------------------------------------------------------
+
+@router.message(Command("app"))
+@router.message(Command("webapp"))
+@router.message(F.text.in_({"📱 Приложение", "📱 Веб-расписание", "📱 WebApp", "📱 Открыть в приложении"}))
+async def handle_open_webapp(message: Message, database: Database = default_db):
+    """
+    Открывает интерактивный Telegram Mini App (WebApp) с расписанием группы.
+    """
+    user = await _get_authorized_user(message, database)
+    if not user:
+        return
+
+    group_id = user["group_id"]
+    group_name = user["group_name"]
+    group_url = user["group_url"]
+    user_sub = user.get("subgroup", 0)
+    lang = user.get("language", "ru")
+
+    today = get_current_college_time().date()
+    week_schedule = []
+    try:
+        week_schedule = await timetable_parser.fetch_week_schedule(
+            group_id=group_id, group_url=group_url, start_date=today
+        )
+    except Exception as e:
+        logger.warning("Не удалось предзагрузить неделю для WebApp: %s", e)
+
+    webapp_url = build_webapp_url(
+        group_name=group_name,
+        subgroup=user_sub,
+        week_days=week_schedule if week_schedule else None,
+    )
+
+    kb = get_webapp_inline_keyboard(webapp_url, lang=lang)
+    text = (
+        f"📱 <b>Интерактивное расписание группы {group_name}</b>\n\n"
+        "Нажмите кнопку ниже, чтобы открыть полноэкранный Mini App прямо в Telegram:\n"
+        "• ⚡ Мгновенное переключение дней недели и свайпы\n"
+        "• 👥 Фильтрация по вашей подгруппе\n"
+        "• 🟢 Live-таймер текущей пары и перемены\n"
+        "• 💤 Отметка пропуска пар в один клик\n"
+        "• 🔍 Быстрый поиск аудиторий и преподавателей"
+        if lang == "ru"
+        else (
+            f"📱 <b>Interactive Schedule for {group_name}</b>\n\n"
+            "Tap the button below to launch Telegram Mini App:\n"
+            "• ⚡ Instant day switching and gestures\n"
+            "• 👥 Subgroup filtering\n"
+            "• 🟢 Live class and break countdowns\n"
+            "• 💤 Toggle sleep/skip classes\n"
+            "• 🔍 Fast room and teacher search"
+        )
+    )
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")

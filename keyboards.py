@@ -225,14 +225,16 @@ def get_schedule_bonch_keyboard(
     show_back_to_menu: bool = True,
     show_today_past: bool = False,
     show_calendar: bool = False,
+    webapp_url: Optional[str] = None,
 ) -> InlineKeyboardMarkup:
     """
     Интерактивная BonchGo-сетка навигации под сообщением расписания:
     Ряд 1: [ ⬅️ 11.09 Пт ]  [ 13.09 Вс ➡️ ]
     Ряд 2: [ ⏪ 05.09 Сб ]  [ 19.09 Сб ⏩ ]
     Ряд 3: [ 🖼 Картинка ]  [ 📆 Вся неделя ]
-    Ряд 4: [ 📅 В календарь (.ics) ] (опционально)
-    Ряд 5: [ 🏠 В главное меню ]
+    Ряд 4: [ 📱 Открыть в приложении ] (опционально)
+    Ряд 5: [ 📅 В календарь (.ics) ] (опционально)
+    Ряд 6: [ 🏠 В главное меню ]
     """
     builder = InlineKeyboardBuilder()
 
@@ -281,6 +283,15 @@ def get_schedule_bonch_keyboard(
         ),
     )
 
+    # Кнопка открытия в Telegram WebApp
+    if webapp_url:
+        builder.row(
+            InlineKeyboardButton(
+                text="📱 Открыть в приложении",
+                web_app=WebAppInfo(url=webapp_url)
+            )
+        )
+
     # Кнопка экспорта в календарь
     if show_calendar:
         builder.row(
@@ -299,7 +310,7 @@ def get_schedule_bonch_keyboard(
             )
         )
 
-    # Ряд 4: Кнопка возврата в меню
+    # Ряд возврата в меню
     if show_back_to_menu:
         builder.row(
             InlineKeyboardButton(
@@ -1519,4 +1530,81 @@ def get_skip_pair_keyboard(
     )
 
     return builder.as_markup()
+
+
+def pack_schedule_for_webapp(
+    week_days: list[dict[str, Any]],
+    group_name: str,
+    week_number: int = 1,
+    is_even: bool = False,
+    subgroup: int = 0,
+) -> str:
+    """Упаковывает расписание группы в компактную base64url JSON строку для мгновенной загрузки в WebApp."""
+    import base64
+    import json
+
+    minimal_days = []
+    for day in week_days:
+        lessons = []
+        for l in day.get("lessons", []):
+            lessons.append({
+                "pair_number": l.get("pair_number"),
+                "time": l.get("time", ""),
+                "subject": l.get("subject", ""),
+                "lesson_type": l.get("lesson_type", ""),
+                "room": l.get("room", ""),
+                "teacher": l.get("teacher", ""),
+                "subgroup": l.get("subgroup", 0),
+                "is_external": l.get("is_external", False),
+            })
+        minimal_days.append({
+            "date": day.get("date", ""),
+            "day_name": day.get("day_name", ""),
+            "lessons": lessons,
+        })
+
+    payload = {
+        "group_name": group_name,
+        "week_number": week_number,
+        "is_even": is_even,
+        "subgroup": subgroup,
+        "days": minimal_days,
+    }
+    raw_json = json.dumps(payload, ensure_ascii=False)
+    b64 = base64.urlsafe_b64encode(raw_json.encode("utf-8")).decode("ascii")
+    return b64.rstrip("=")
+
+
+def build_webapp_url(
+    group_name: str,
+    subgroup: int = 0,
+    week_days: Optional[list[dict[str, Any]]] = None,
+    week_number: int = 1,
+    is_even: bool = False,
+    base_url: Optional[str] = None,
+) -> str:
+    """Строит полный HTTPS URL для Telegram WebApp с опциональным hash payload данных."""
+    from config import Settings
+    if not base_url:
+        settings = Settings()
+        base_url = settings.WEBAPP_SCHEDULE_URL or "https://fuckluck.github.io/ktmu-schedule-bot/webapp/"
+
+    if week_days:
+        b64_data = pack_schedule_for_webapp(week_days, group_name, week_number, is_even, subgroup)
+        return f"{base_url}#data={b64_data}"
+
+    return f"{base_url}?group={group_name}&subgroup={subgroup}"
+
+
+def get_webapp_inline_keyboard(url: str, lang: str = "ru") -> InlineKeyboardMarkup:
+    """Клавиатура с кнопкой вызова Telegram Mini App."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="📱 Открыть расписание" if lang == "ru" else "📱 Open Schedule WebApp",
+            web_app=WebAppInfo(url=url)
+        )
+    )
+    return builder.as_markup()
+
 

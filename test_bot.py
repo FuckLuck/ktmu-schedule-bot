@@ -3248,3 +3248,134 @@ async def test_subgroup_and_skip_pair_handlers(test_db):
         assert await test_db.is_pair_skipped(uid, "2026-09-22", 1)
 
 
+def test_webapp_packing_and_url_builder():
+    """Тест упаковки данных расписания и генерации URL для Telegram Mini App."""
+    from keyboards import pack_schedule_for_webapp, build_webapp_url, get_webapp_inline_keyboard, get_schedule_bonch_keyboard
+    import base64
+    import json
+
+    days = [
+        {
+            "date": "2026-09-21",
+            "day_name": "Понедельник",
+            "lessons": [
+                {
+                    "pair_number": 1,
+                    "time": "08:30-10:00",
+                    "subject": "Информатика",
+                    "lesson_type": "Лекция",
+                    "room": "202",
+                    "teacher": "Тестов Т.Т.",
+                    "subgroup": 1,
+                }
+            ]
+        }
+    ]
+
+    # 1. pack_schedule_for_webapp
+    b64 = pack_schedule_for_webapp(days, "1-КПД-2", week_number=4, is_even=False, subgroup=1)
+    assert len(b64) > 20
+    # Проверяем декодирование
+    decoded_json = base64.urlsafe_b64decode(b64 + "==").decode("utf-8")
+    payload = json.loads(decoded_json)
+    assert payload["group_name"] == "1-КПД-2"
+    assert payload["week_number"] == 4
+    assert payload["subgroup"] == 1
+    assert len(payload["days"]) == 1
+
+    # 2. build_webapp_url с payload в hash (#data=...)
+    url = build_webapp_url("1-КПД-2", subgroup=1, week_days=days)
+    assert "https://" in url
+    assert "#data=" in url
+
+    # 3. build_webapp_url без дней (fallback на query params)
+    url_simple = build_webapp_url("1-КПД-2", subgroup=2, week_days=None)
+    assert "?group=1-КПД-2&subgroup=2" in url_simple
+
+    # 4. get_webapp_inline_keyboard
+    kb = get_webapp_inline_keyboard(url)
+    all_btns = [btn for row in kb.inline_keyboard for btn in row]
+    assert len(all_btns) == 1
+    assert all_btns[0].web_app is not None
+    assert all_btns[0].web_app.url == url
+
+    # 5. get_schedule_bonch_keyboard с webapp_url
+    target_d = date(2026, 9, 21)
+    bonch_kb = get_schedule_bonch_keyboard(target_d, webapp_url=url)
+    bonch_btns = [btn for row in bonch_kb.inline_keyboard for btn in row]
+    webapp_btns = [btn for btn in bonch_btns if btn.web_app is not None]
+    assert len(webapp_btns) == 1
+    assert webapp_btns[0].web_app.url == url
+    assert "Открыть в приложении" in webapp_btns[0].text
+
+
+@pytest.mark.asyncio
+async def test_web_server_endpoints(test_db):
+    """Тест работы aiohttp веб-сервера для Mini App."""
+    from web_server import create_web_app
+    from aiohttp.test_utils import TestClient, TestServer
+
+    app = create_web_app(test_db)
+    client = TestClient(TestServer(app))
+    await client.start_server()
+    try:
+        # Проверка /health
+        resp = await client.get("/health")
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "ok"
+
+        # Проверка /api/schedule без параметров (400)
+        resp_err = await client.get("/api/schedule")
+        assert resp_err.status == 400
+
+        # Сохраняем тестовую группу
+        await test_db.upsert_groups_bulk([{
+            "id": "grp_api_test",
+            "group_name": "1-КПД-99",
+            "specialty_name": "Тестирование",
+            "course": 1,
+            "relative_url": "/kpd99"
+        }])
+
+        with patch("timetable_parser.timetable_parser.fetch_week_schedule", new_callable=AsyncMock) as mock_week:
+            mock_week.return_value = [{"date": "2026-09-21", "lessons": []}]
+            resp_ok = await client.get("/api/schedule?group_id=grp_api_test")
+            assert resp_ok.status == 200
+            res_data = await resp_ok.json()
+            assert res_data["group_id"] == "grp_api_test"
+            assert "days" in res_data
+    finally:
+        await client.close()
+
+
+@pytest.mark.asyncio
+async def test_handle_open_webapp(test_db):
+    """Тест команды /app для открытия WebApp."""
+    from handlers import handle_open_webapp
+    from aiogram.types import User, Chat, Message
+
+    uid = 554433
+    await test_db.upsert_user(
+        user_id=uid,
+        group_id="grp_app_test",
+        group_url="/app",
+        group_name="1-КПД-99",
+    )
+
+    msg = MagicMock(spec=Message)
+    msg.from_user = User(id=uid, is_bot=False, first_name="AppTester")
+    msg.chat = Chat(id=uid, type="private")
+    msg.message_thread_id = None
+    msg.answer = AsyncMock()
+
+    with patch("timetable_parser.timetable_parser.fetch_week_schedule", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = []
+        await handle_open_webapp(msg, database=test_db)
+        assert msg.answer.called
+        call_kwargs = msg.answer.call_args[1]
+        kb = call_kwargs["reply_markup"]
+        all_btns = [b for row in kb.inline_keyboard for b in row]
+        assert any(b.web_app is not None for b in all_btns)
+
+

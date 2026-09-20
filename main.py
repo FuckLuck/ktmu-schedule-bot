@@ -62,9 +62,10 @@ async def on_startup(bot: Bot) -> None:
     asyncio.create_task(timetable_parser.preload_active_groups_schedules(db))
 
     # 6. Автоматическая регистрация команд в меню Telegram
-    from aiogram.types import BotCommand
+    from aiogram.types import BotCommand, MenuButtonWebApp, WebAppInfo
     commands = [
         BotCommand(command="start", description="Главное меню и запуск"),
+        BotCommand(command="app", description="📱 Открыть расписание в приложении (Mini App)"),
         BotCommand(command="today", description="Расписание на сегодня"),
         BotCommand(command="tomorrow", description="Расписание на завтра"),
         BotCommand(command="week", description="Расписание на неделю"),
@@ -85,8 +86,32 @@ async def on_startup(bot: Bot) -> None:
     except Exception as e:
         logger.warning("Не удалось зарегистрировать команды меню бота: %s", e)
 
+    # 7. Установка постоянной кнопки WebApp в меню чата (слева от поля ввода)
+    try:
+        webapp_url = config.WEBAPP_SCHEDULE_URL
+        if webapp_url:
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(text="📱 Расписание", web_app=WebAppInfo(url=webapp_url))
+            )
+            logger.info("Кнопка Telegram Mini App (Web) успешно установлена в меню чата!")
+    except Exception as e:
+        logger.warning("Не удалось установить кнопку WebApp в меню чата: %s", e)
+
+    # 8. Запуск локального Web-сервера для раздачи Mini App и REST API
+    global web_runner
+    try:
+        from web_server import start_web_server
+        web_runner = await start_web_server(
+            host=config.WEB_SERVER_HOST, port=config.WEB_SERVER_PORT, database=db
+        )
+    except Exception as e:
+        logger.warning("Web-сервер Mini App не запущен: %s", e)
+
     bot_info = await bot.get_me()
     logger.info("Бот @%s успешно авторизован и готов к работе!", bot_info.username)
+
+
+web_runner: Optional[Any] = None
 
 
 async def on_shutdown(bot: Bot) -> None:
@@ -94,6 +119,13 @@ async def on_shutdown(bot: Bot) -> None:
     Корректная остановка сервисов при завершении процесса (Graceful Shutdown).
     """
     logger.info("Остановка бота...")
+    global web_runner
+    if web_runner:
+        try:
+            await web_runner.cleanup()
+        except Exception:
+            pass
+
     if scheduler_service:
         scheduler_service.shutdown()
 

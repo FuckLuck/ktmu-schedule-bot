@@ -1,0 +1,780 @@
+/* ==========================================================================
+   Расписание КТМУ — Telegram Mini App (WebApp)
+   Rich Aesthetics, Glassmorphism & Cyber Modern Design System
+   ========================================================================== */
+
+:root {
+  /* Цветовая палитра: глубокий ночной режим */
+  --bg-primary: #0b0f19;
+  --bg-secondary: #111827;
+  --bg-tertiary: #1f2937;
+  
+  --surface-glass: rgba(26, 35, 53, 0.65);
+  --surface-glass-hover: rgba(36, 48, 74, 0.8);
+  --surface-border: rgba(255, 255, 255, 0.08);
+  --surface-border-active: rgba(99, 102, 241, 0.5);
+
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --accent-primary: #6366f1;       /* Indigo */
+  --accent-primary-hover: #4f46e5;
+  --accent-glow: rgba(99, 102, 241, 0.35);
+  --accent-cyan: #06b6d4;
+  --accent-emerald: #10b981;
+  --accent-amber: #f59e0b;
+  --accent-rose: #f43f5e;
+  --accent-purple: #a855f7;
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.25);
+
+  --font-heading: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-full: 9999px;
+
+  --transition-fast: 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-smooth: 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Синхронизация с темой Telegram (если передана клиентом) */
+body.telegram-theme {
+  --bg-primary: var(--tg-theme-bg-color, #0b0f19);
+  --bg-secondary: var(--tg-theme-secondary-bg-color, #111827);
+  --text-primary: var(--tg-theme-text-color, #f8fafc);
+  --text-secondary: var(--tg-theme-hint-color, #94a3b8);
+  --accent-primary: var(--tg-theme-button-color, #6366f1);
+}
+
+/* Светлая тема (ручное переключение) */
+body.light-theme {
+  --bg-primary: #f1f5f9;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e2e8f0;
+  --surface-glass: rgba(255, 255, 255, 0.85);
+  --surface-glass-hover: rgba(255, 255, 255, 0.95);
+  --surface-border: rgba(0, 0, 0, 0.08);
+  --surface-border-active: rgba(99, 102, 241, 0.6);
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+/* ==========================================================================
+   Базовые стили и Reset
+   ========================================================================== */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+  line-height: 1.5;
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.12) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(6, 182, 212, 0.08) 0px, transparent 50%);
+  background-attachment: fixed;
+}
+
+#app-container {
+  max-width: 580px;
+  margin: 0 auto;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 24px;
+}
+
+/* ==========================================================================
+   Шапка (Header)
+   ========================================================================== */
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(11, 15, 25, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--surface-border);
+  padding: 12px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+body.light-theme .header {
+  background: rgba(241, 245, 249, 0.85);
+}
+
+.header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.college-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-badge {
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-cyan));
+  color: #ffffff;
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-glow);
+}
+
+.brand-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.group-title {
+  font-family: var(--font-heading);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+.week-badge {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent-cyan);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.icon-button {
+  background: var(--surface-glass);
+  border: 1px solid var(--surface-border);
+  color: var(--text-primary);
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all var(--transition-fast);
+}
+
+.icon-button:active {
+  transform: scale(0.92);
+}
+
+/* ==========================================================================
+   Фильтр подгрупп (Subgroup Selector Pill Slider)
+   ========================================================================== */
+.subgroup-selector {
+  position: relative;
+  display: flex;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-full);
+  padding: 3px;
+  gap: 3px;
+}
+
+body.light-theme .subgroup-selector {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.subgroup-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: color var(--transition-smooth);
+  position: relative;
+  z-index: 2;
+  text-align: center;
+}
+
+.subgroup-btn.active {
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-primary-hover));
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4);
+}
+
+/* ==========================================================================
+   Лента дней недели (Horizontal Day Pills)
+   ========================================================================== */
+.days-nav-wrapper {
+  padding: 10px 16px 4px;
+  overflow: hidden;
+}
+
+.days-nav {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  padding: 4px 2px;
+}
+
+.days-nav::-webkit-scrollbar {
+  display: none;
+}
+
+.day-pill {
+  flex: 0 0 auto;
+  min-width: 58px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--surface-glass);
+  border: 1px solid var(--surface-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+  transition: all var(--transition-smooth);
+  position: relative;
+}
+
+.day-pill:active {
+  transform: scale(0.95);
+}
+
+.day-pill.active {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(6, 182, 212, 0.2));
+  border-color: var(--accent-primary);
+  box-shadow: var(--shadow-glow);
+}
+
+.day-pill-name {
+  font-family: var(--font-heading);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.day-pill.active .day-pill-name {
+  color: #ffffff;
+}
+
+.day-pill-date {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.day-pill.active .day-pill-date {
+  color: var(--accent-cyan);
+}
+
+.day-pill-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: var(--accent-primary);
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 700;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--bg-primary);
+}
+
+.day-pill.today::after {
+  content: '';
+  position: absolute;
+  bottom: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent-cyan);
+}
+
+/* ==========================================================================
+   Live-виджет текущей пары
+   ========================================================================== */
+.live-widget {
+  padding: 8px 16px;
+}
+
+.live-card {
+  position: relative;
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9));
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+body.light-theme .live-card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(241, 245, 249, 0.9));
+}
+
+.live-glow {
+  position: absolute;
+  top: -50px;
+  right: -50px;
+  width: 120px;
+  height: 120px;
+  background: radial-gradient(circle, var(--accent-primary), transparent 70%);
+  opacity: 0.2;
+  filter: blur(20px);
+  pointer-events: none;
+}
+
+.live-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.live-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--accent-emerald);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-emerald);
+  animation: pulse-glow 1.5s infinite;
+}
+
+@keyframes pulse-glow {
+  0% { transform: scale(0.9); opacity: 1; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
+  70% { transform: scale(1.1); opacity: 0.8; box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+  100% { transform: scale(0.9); opacity: 1; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+.live-countdown {
+  font-family: var(--font-heading);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+}
+
+.live-pair-title {
+  font-family: var(--font-heading);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.live-pair-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.live-progress-container {
+  margin-top: 10px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+}
+
+.live-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-cyan));
+  border-radius: var(--radius-full);
+  transition: width 1s linear;
+}
+
+/* ==========================================================================
+   Поиск предметов и преподавателей
+   ========================================================================== */
+.search-container {
+  padding: 6px 16px 10px;
+}
+
+.search-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: 12px;
+  font-size: 14px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+#search-input {
+  width: 100%;
+  background: var(--surface-glass);
+  border: 1px solid var(--surface-border);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 13px;
+  padding: 8px 36px 8px 34px;
+  border-radius: var(--radius-md);
+  outline: none;
+  transition: all var(--transition-fast);
+}
+
+#search-input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.search-clear-btn {
+  position: absolute;
+  right: 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px;
+}
+
+/* ==========================================================================
+   Список занятий (Schedule Timeline)
+   ========================================================================== */
+.schedule-content {
+  flex: 1;
+  padding: 4px 16px 16px;
+}
+
+.day-header-info {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.current-day-label {
+  font-family: var(--font-heading);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.current-day-date {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.lessons-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Карточка пары */
+.lesson-card {
+  position: relative;
+  background: var(--surface-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition-smooth);
+}
+
+.lesson-card:hover {
+  background: var(--surface-glass-hover);
+  border-color: var(--surface-border-active);
+  transform: translateY(-1px);
+}
+
+.lesson-card.skipped {
+  opacity: 0.45;
+  border-style: dashed;
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.lesson-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.lesson-time-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pair-number {
+  background: linear-gradient(135deg, var(--accent-primary), var(--accent-purple));
+  color: #ffffff;
+  font-family: var(--font-heading);
+  font-weight: 800;
+  font-size: 12px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pair-time {
+  font-family: var(--font-heading);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.lesson-type-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  background: rgba(168, 85, 247, 0.15);
+  color: var(--accent-purple);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.lesson-type-badge.type-lecture {
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--accent-primary);
+  border-color: rgba(99, 102, 241, 0.3);
+}
+
+.lesson-type-badge.type-practice {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--accent-emerald);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.lesson-type-badge.type-lab {
+  background: rgba(6, 182, 212, 0.15);
+  color: var(--accent-cyan);
+  border-color: rgba(6, 182, 212, 0.3);
+}
+
+.lesson-subject {
+  font-family: var(--font-heading);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.lesson-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.detail-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-secondary);
+}
+
+.detail-item.room {
+  color: var(--accent-cyan);
+  font-weight: 600;
+}
+
+.detail-item.subgroup {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--accent-amber);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.lesson-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.skip-toggle-btn {
+  background: transparent;
+  border: 1px solid var(--surface-border);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.skip-toggle-btn:hover {
+  border-color: var(--accent-rose);
+  color: var(--accent-rose);
+}
+
+.lesson-card.skipped .skip-toggle-btn {
+  background: rgba(244, 63, 94, 0.15);
+  border-color: var(--accent-rose);
+  color: var(--accent-rose);
+}
+
+/* ==========================================================================
+   Пустое состояние (Empty State)
+   ========================================================================== */
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.empty-icon {
+  font-size: 48px;
+  margin-bottom: 8px;
+  animation: float-bounce 2s ease-in-out infinite;
+}
+
+@keyframes float-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+.empty-title {
+  font-family: var(--font-heading);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.empty-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  max-width: 280px;
+}
+
+/* ==========================================================================
+   Нижний тулбар (Footer)
+   ========================================================================== */
+.footer-bar {
+  padding: 12px 16px 0;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.footer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.footer-btn {
+  flex: 1;
+  background: var(--surface-glass);
+  border: 1px solid var(--surface-border);
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all var(--transition-fast);
+}
+
+.footer-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--surface-border-active);
+}
+
+.footer-btn:active {
+  transform: scale(0.97);
+}
+
+.footer-note {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
+   Toast всплывающие сообщения
+   ========================================================================== */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(100px);
+  background: rgba(17, 24, 39, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--accent-primary);
+  color: #ffffff;
+  padding: 10px 18px;
+  border-radius: var(--radius-full);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  opacity: 0;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  z-index: 1000;
+  white-space: nowrap;
+}
+
+.toast.show {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+}
