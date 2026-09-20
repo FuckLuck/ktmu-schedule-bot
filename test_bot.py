@@ -2559,3 +2559,99 @@ async def test_admin_backup_and_restore_db(test_db, tmp_path):
     # Проверяем, что в test_db теперь есть новый студент
     user_check = await test_db.get_user(999)
     assert user_check is not None
+
+
+@pytest.mark.asyncio
+async def test_voznesensky_bells_and_room_detection(test_db):
+    """Тест точного расчета времени звонков на Вознесенском пр., 44 и кастомных звонков групп."""
+    from timetable_parser import (
+        clean_period_time,
+        format_day_schedule_message,
+        format_pair_notification,
+        TimetableParser,
+    )
+
+    # 1. Проверка очистки и нормализации строки времени
+    assert clean_period_time("8:30–9:55") == "08:30-09:55"
+    assert clean_period_time("15:20–16:45") == "15:20-16:45"
+    assert clean_period_time("16:55–18:20") == "16:55-18:20"
+
+    # 2. Проверка парсинга звонков для группы с кастомными звонками (1-КПД-2) и аудитории В-485
+    parser = TimetableParser(database=test_db)
+
+    mock_site_data = {
+        "config": {
+            "semesterStart": "2026-09-01",
+            "periodTimes": ["08:30-10:00", "10:10-11:40", "11:50-13:20", "14:00-15:30", "15:40-17:10", "17:20-18:50"],
+            "voznesenskyPeriodTimes": ["08:30–09:55", "10:05–11:30", "11:40–13:05", "13:45–15:10", "15:20–16:45", "16:55–18:20", "18:30–20:00"],
+        },
+        "groups": [
+            {
+                "id": "grp_kpd_2",
+                "name": "1-КПД-2",
+                "dayPeriodTimesByParity": {
+                    "odd": {
+                        "3": ["8:30–9:55", "10:20–11:45", "12:00–13:25", "13:55–15:20", "15:20–16:45", "16:55–18:20"]
+                    }
+                },
+                "dayPeriodTimes": {
+                    "3": ["08:30–09:55", "10:05–11:30", "11:40–13:05", "13:45–15:10", "15:20–16:45", "16:55–18:20"]
+                }
+            }
+        ],
+        "rooms": [
+            {"id": "rm_v485", "name": "В-485", "isExternal": True},
+            {"id": "rm_301", "name": "301", "isExternal": False},
+        ],
+        "subjects": [{"id": "sub_intro", "name": "Введение в профессиональную деятельность"}],
+        "teachers": [{"id": "tch_kosareva", "name": "Косарева А.Н."}],
+        "lessonTypes": [{"id": "lt_lek", "name": "лек"}, {"id": "lt_pr", "name": "пр"}],
+        "schedule": {
+            "instances": [
+                {"instId": "inst_1", "groupId": "grp_kpd_2", "subjectId": "sub_intro", "teacherId": "tch_kosareva", "typeId": "lt_lek", "weekPattern": "every"},
+                {"instId": "inst_2", "groupId": "grp_kpd_2", "subjectId": "sub_intro", "teacherId": "tch_kosareva", "typeId": "lt_pr", "weekPattern": "every"},
+            ],
+            "assignment": {
+                "inst_1": {"day": 3, "period": 4, "roomId": "rm_v485"},  # 5 пара
+                "inst_2": {"day": 3, "period": 5, "roomId": "rm_v485"},  # 6 пара
+            }
+        }
+    }
+
+    mock_session = AsyncMock()
+    with patch.object(parser, "_fetch_site_data", AsyncMock(return_value=mock_site_data)):
+        target_date = date(2026, 9, 17)  # Четверг (day 3), 3-я учебная неделя (нечетная)
+        res = await parser._parse_schedule_from_api(mock_session, "grp_kpd_2", target_date)
+
+    lessons = res.get("lessons", [])
+    assert len(lessons) == 2
+
+    # Пара 5: время должно быть ровно 15:20-16:45 (а не 15:40-17:10!)
+    l5 = lessons[0]
+    assert l5["pair_number"] == 5
+    assert l5["time"] == "15:20-16:45"
+    assert l5["start_time"] == "15:20"
+    assert l5["end_time"] == "16:45"
+    assert l5["room"] == "В-485"
+    assert l5["is_external"] is True
+    assert l5["location"] == "Вознесенский пр., 44"
+
+    # Пара 6: время должно быть ровно 16:55-18:20 (а не 17:20-18:50!)
+    l6 = lessons[1]
+    assert l6["pair_number"] == 6
+    assert l6["time"] == "16:55-18:20"
+    assert l6["start_time"] == "16:55"
+    assert l6["end_time"] == "18:20"
+    assert l6["room"] == "В-485"
+    assert l6["is_external"] is True
+
+    # 3. Проверка форматирования сообщения дня
+    msg_text = format_day_schedule_message(res, "1-КПД-2")
+    assert "15:20-16:45" in msg_text
+    assert "16:55-18:20" in msg_text
+    assert "Вознесенский пр., 44" in msg_text
+
+    # 4. Проверка уведомления о начале пары
+    notif_text = format_pair_notification(l5, "1-КПД-2")
+    assert "15:20-16:45" in notif_text
+    assert "Вознесенский пр., 44" in notif_text

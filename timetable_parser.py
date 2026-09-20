@@ -42,6 +42,29 @@ MONTH_NAMES_GENITIVE = [
 ]
 
 
+def clean_period_time(pt: str) -> str:
+    """
+    Очищает строку времени от неразрывных пробелов и тире, нормализует в формат HH:MM-HH:MM.
+    Например: '8:30–9:55' -> '08:30-09:55', '15:20–16:45' -> '15:20-16:45'.
+    """
+    if not pt:
+        return ""
+    cleaned = str(pt).replace("\xa0", " ").replace("–", "-").replace("—", "-").strip()
+    if "-" in cleaned:
+        parts = cleaned.split("-", 1)
+        start_raw = parts[0].strip()
+        end_raw = parts[1].strip()
+
+        def _fmt(s: str) -> str:
+            sp = s.split(":")
+            if len(sp) == 2 and sp[0].isdigit() and sp[1].isdigit():
+                return f"{int(sp[0]):02d}:{int(sp[1]):02d}"
+            return s
+
+        return f"{_fmt(start_raw)}-{_fmt(end_raw)}"
+    return cleaned
+
+
 class TimetableParser:
     """
     Парсер и менеджер расписания колледжа КТМУ с кэшированием в SQLite.
@@ -139,16 +162,37 @@ class TimetableParser:
         semester_start = config_data.get("semesterStart", f"{target_date.year}-09-01")
         academic_week = self.calculate_academic_week(target_date, semester_start)
 
+        # Стандартные звонки колледжа
         period_times = config_data.get("periodTimes", config.DEFAULT_PERIOD_TIMES)
-        # Очистка неразрывных пробелов и тире
-        cleaned_period_times: list[str] = []
-        for pt in period_times:
-            clean_pt = str(pt).replace("\xa0", " ").replace("–", "-").replace("—", "-").strip()
-            cleaned_period_times.append(clean_pt)
+        cleaned_period_times = [clean_period_time(pt) for pt in period_times]
+
+        # Звонки для корпуса на Вознесенском пр., 44
+        voz_period_times = config_data.get("voznesenskyPeriodTimes", config.DEFAULT_VOZNESENSKY_PERIOD_TIMES)
+        cleaned_voz_period_times = [clean_period_time(pt) for pt in voz_period_times]
+        if not any(cleaned_voz_period_times):
+            cleaned_voz_period_times = [clean_period_time(pt) for pt in config.DEFAULT_VOZNESENSKY_PERIOD_TIMES]
+
+        # Сокращенные звонки
+        shortened_period_times = [clean_period_time(pt) for pt in config_data.get("shortenedPeriodTimes", [])]
+        shortened_dates = set(config_data.get("shortenedDates", []))
+
+        # Определение четности недели с учетом возможных исключений колледжа
+        target_date_str = target_date.isoformat()
+        week_parity_overrides = config_data.get("weekParityOverrides", {})
+        if target_date_str in week_parity_overrides:
+            week_parity = week_parity_overrides[target_date_str]
+        else:
+            week_parity = "even" if academic_week % 2 == 0 else "odd"
+
+        # Получаем данные текущей группы из API для проверки кастомных звонков
+        groups_list = site_data.get("groups", [])
+        current_group_data = next((g for g in groups_list if g.get("id") == group_id), {})
+        group_day_period_times_by_parity = current_group_data.get("dayPeriodTimesByParity") or {}
+        group_day_period_times = current_group_data.get("dayPeriodTimes") or {}
 
         subjects = {s["id"]: s.get("name", "Без названия").strip() for s in site_data.get("subjects", [])}
         teachers = {t["id"]: t.get("name", "").strip() for t in site_data.get("teachers", [])}
-        rooms = {r["id"]: r.get("name", "").strip() for r in site_data.get("rooms", [])}
+        rooms_dict = {r["id"]: r for r in site_data.get("rooms", [])}
         lesson_types = {t["id"]: t.get("name", "").strip() for t in site_data.get("lessonTypes", [])}
 
         type_mapping = {
@@ -207,19 +251,50 @@ class TimetableParser:
             period_idx = int(ass.get("period", 0))
             pair_num = period_idx + 1
 
-            if period_idx < len(config.DEFAULT_PERIOD_TIMES):
-                raw_time = config.DEFAULT_PERIOD_TIMES[period_idx]
-            elif period_idx < len(cleaned_period_times) and cleaned_period_times[period_idx]:
-                raw_time = cleaned_period_times[period_idx]
-            else:
-                raw_time = ""
+            room_id = ass.get("roomId", "")
+            room_obj = rooms_dict.get(room_id, {})
+            room_name = room_obj.get("name", "").strip() if room_id else ""
+            is_external_room = bool(
+                room_obj.get("isExternal")
+                or (room_name and (room_name.startswith(("В-", "В ", "в-", "в ")) or "вознесен" in room_name.lower()))
+            )
+
+            # --- Точное вычисление времени пары (звонков) ---
+            raw_time = ""
+
+            # 1. Специфичные звонки группы для текущей четности недели (odd/even)
+            parity_dict = group_day_period_times_by_parity.get(week_parity) or {}
+            parity_times = parity_dict.get(str(target_weekday)) or parity_dict.get(target_weekday)
+            if parity_times and period_idx < len(parity_times) and parity_times[period_idx]:
+                raw_time = clean_period_time(parity_times[period_idx])
+
+            # 2. Общие звонки группы на этот день недели
+            if not raw_time:
+                day_times = group_day_period_times.get(str(target_weekday)) or group_day_period_times.get(target_weekday)
+                if day_times and period_idx < len(day_times) and day_times[period_idx]:
+                    raw_time = clean_period_time(day_times[period_idx])
+
+            # 3. Если пара проходит в корпусе на Вознесенском пр., 44
+            if not raw_time and is_external_room:
+                if period_idx < len(cleaned_voz_period_times) and cleaned_voz_period_times[period_idx]:
+                    raw_time = cleaned_voz_period_times[period_idx]
+
+            # 4. Сокращенный день
+            if not raw_time and target_date_str in shortened_dates:
+                if period_idx < len(shortened_period_times) and shortened_period_times[period_idx]:
+                    raw_time = shortened_period_times[period_idx]
+
+            # 5. Базовые звонки колледжа
+            if not raw_time:
+                if period_idx < len(cleaned_period_times) and cleaned_period_times[period_idx]:
+                    raw_time = cleaned_period_times[period_idx]
+                elif period_idx < len(config.DEFAULT_PERIOD_TIMES):
+                    raw_time = clean_period_time(config.DEFAULT_PERIOD_TIMES[period_idx])
 
             time_parts = raw_time.split("-")
             start_time = time_parts[0].strip() if len(time_parts) > 0 else ""
             end_time = time_parts[1].strip() if len(time_parts) > 1 else ""
 
-            room_id = ass.get("roomId", "")
-            room_name = rooms.get(room_id, "")
             subject_name = subjects.get(inst.get("subjectId"), "Учебное занятие")
             teacher_name = teachers.get(inst.get("teacherId"), "")
 
@@ -241,6 +316,8 @@ class TimetableParser:
                 "format": lesson_format,
                 "subgroup": subgroup,
                 "lesson_type": lesson_type,
+                "is_external": is_external_room,
+                "location": "Вознесенский пр., 44" if is_external_room else "Основной корпус",
             }
 
             lessons_map.setdefault(pair_num, []).append(lesson_item)
@@ -534,7 +611,10 @@ def format_day_schedule_message(schedule_data: dict[str, Any], group_name: str) 
                     if sub_type and sub_type != "Занятие":
                         parts.append(f"[{sub_type}]")
                     if room:
-                        parts.append(f"Ауд. {room}")
+                        room_label = f"Ауд. {room}"
+                        if l.get("is_external") and "Вознесенск" not in room:
+                            room_label += " (Вознесенский)"
+                        parts.append(room_label)
                     if teacher:
                         parts.append(f"👤 {teacher}")
                     details_str = " | ".join(parts) if parts else "По расписанию"
@@ -554,7 +634,10 @@ def format_day_schedule_message(schedule_data: dict[str, Any], group_name: str) 
                     if sub_type and sub_type != "Занятие":
                         parts.append(f"[{sub_type}]")
                     if room:
-                        parts.append(f"Ауд. {room}")
+                        room_label = f"Ауд. {room}"
+                        if l.get("is_external") and "Вознесенск" not in room:
+                            room_label += " (Вознесенский)"
+                        parts.append(room_label)
                     if teacher:
                         parts.append(f"👤 {teacher}")
                     details_str = " | ".join(parts) if parts else "По расписанию"
@@ -580,7 +663,10 @@ def format_day_schedule_message(schedule_data: dict[str, Any], group_name: str) 
             if l_type and l_type != "Занятие":
                 details.append(f"🏷️ <i>{l_type}</i>")
             if room:
-                details.append(f"🚪 <b>Ауд:</b> {room}")
+                room_text = f"🚪 <b>Ауд:</b> {room}"
+                if l.get("is_external") and "Вознесенск" not in room:
+                    room_text += " <i>(Вознесенский пр., 44)</i>"
+                details.append(room_text)
             if teacher:
                 details.append(f"👤 <b>Преп:</b> {teacher}")
             details.append(f"{format_icon} <i>{fmt}</i>")
@@ -640,9 +726,10 @@ def format_pair_notification(lesson: dict[str, Any], group_name: str) -> str:
 
     time_info = f" ({time_str})" if time_str else ""
     format_icon = "🌐" if fmt == "Дистанционно" else "🏛"
+    room_display = f"{room} (Вознесенский пр., 44)" if (lesson.get("is_external") and room and "Вознесенск" not in room) else room
 
     lines = [
-        f"🔔 <b>Началась {pair_num} пара! Предмет: {subject}, Кабинет: {room}</b>",
+        f"🔔 <b>Началась {pair_num} пара! Предмет: {subject}, Кабинет: {room_display}</b>",
         f"👥 <b>Группа:</b> <code>{group_name}</code>{time_info}",
     ]
     details = []
