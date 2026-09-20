@@ -1,12 +1,124 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <meta http-equiv="refresh" content="0; url=./webapp/">
-  <title>Перенаправление в Расписание КТМУ...</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Расписание КТМУ | Telegram Mini App</title>
+  
+  <!-- Telegram WebApp SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+  <!-- Google Fonts: Outfit & Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <p>Загрузка <a href="./webapp/">Расписания КТМУ</a>...</p>
-  <script>window.location.href = './webapp/';</script>
+  <div id="app-container">
+    <!-- Верхняя шапка приложения -->
+    <header class="header">
+      <div class="header-top">
+        <div class="college-brand">
+          <div class="brand-badge">КТМУ</div>
+          <div class="brand-info">
+            <h1 id="group-title" class="group-title">Загрузка...</h1>
+            <span id="week-badge" class="week-badge">Учебная неделя</span>
+          </div>
+        </div>
+        <button id="theme-toggle" class="icon-button" aria-label="Сменить тему" title="Сменить тему">
+          <span class="theme-icon">🌙</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Горизонтальная лента дней недели (Пн-Сб) -->
+    <nav class="days-nav-wrapper">
+      <div class="days-nav" id="days-nav">
+        <!-- Генерируется динамически через JS -->
+      </div>
+    </nav>
+
+    <!-- Желтая информационная табличка о выборе подгруппы по предметам -->
+    <div class="subgroup-notice-wrapper">
+      <div class="subgroup-notice-card" id="subgroup-notice">
+        <span class="notice-icon">💡</span>
+        <div class="notice-content">
+          <span class="notice-title">Выберите подгруппу по некоторым предметам</span>
+          <span class="notice-text">Информатика, иностранный язык и лабораторные работы делятся на 1-ю и 2-ю подгруппы. Ориентируйтесь на свою подгруппу.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live-виджет текущей пары (активен сегодня) -->
+    <section class="live-widget" id="live-widget" style="display: none;">
+      <div class="live-card">
+        <div class="live-glow"></div>
+        <div class="live-header">
+          <span class="live-status-pill" id="live-status-pill">
+            <span class="pulse-dot"></span> <span id="live-status-text">Идет пара</span>
+          </span>
+          <span class="live-countdown" id="live-countdown">--:--</span>
+        </div>
+        <div class="live-body">
+          <div class="live-pair-title" id="live-pair-title">Текущее занятие</div>
+          <div class="live-pair-meta" id="live-pair-meta">
+            <span class="live-room" id="live-room">Кабинет</span>
+            <span class="live-teacher" id="live-teacher">Преподаватель</span>
+          </div>
+        </div>
+        <div class="live-progress-container">
+          <div class="live-progress-bar" id="live-progress-bar" style="width: 0%;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Поиск / фильтр предметов -->
+    <div class="search-container">
+      <div class="search-input-wrapper">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="search-input" placeholder="Поиск по предмету или преподавателю..." autocomplete="off">
+        <button id="search-clear" class="search-clear-btn" style="display: none;">✕</button>
+      </div>
+    </div>
+
+    <!-- Список занятий на выбранный день -->
+    <main class="schedule-content">
+      <div class="day-header-info">
+        <h2 id="current-day-label" class="current-day-label">Понедельник</h2>
+        <span id="current-day-date" class="current-day-date">21 сентября</span>
+      </div>
+
+      <div class="lessons-timeline" id="lessons-timeline">
+        <!-- Динамические карточки пар -->
+      </div>
+
+      <!-- Состояние отсутствия пар -->
+      <div class="empty-state" id="empty-state" style="display: none;">
+        <div class="empty-icon">🎉</div>
+        <h3 class="empty-title">В этот день пар нет!</h3>
+        <p class="empty-desc">Отличный повод отдохнуть или подготовиться к занятиям.</p>
+      </div>
+    </main>
+
+    <!-- Нижний информационный тулбар -->
+    <footer class="footer-bar">
+      <div class="footer-actions">
+        <button id="btn-share" class="footer-btn">
+          <span>📤</span> Поделиться
+        </button>
+        <button id="btn-refresh" class="footer-btn">
+          <span>🔄</span> Обновить
+        </button>
+      </div>
+      <p class="footer-note">Колледж телекоммуникаций СПбГУТ • Расписание пар</p>
+    </footer>
+  </div>
+
+  <!-- Toast всплывающие уведомления -->
+  <div id="toast" class="toast"></div>
+
+  <script src="app.js"></script>
 </body>
 </html>
