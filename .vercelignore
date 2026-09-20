@@ -1,0 +1,11 @@
+*.py
+*.db
+*.db-wal
+*.db-shm
+.venv/
+venv/
+env/
+Dockerfile
+docker-compose.yml
+requirements.txt
+assets/
