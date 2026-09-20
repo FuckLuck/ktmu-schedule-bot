@@ -1596,7 +1596,7 @@ def build_webapp_url(
     from config import Settings
     if not base_url:
         settings = Settings()
-        base_url = settings.WEBAPP_SCHEDULE_URL or "https://fuckluck.github.io/ktmu-schedule-bot/webapp/"
+        base_url = settings.WEBAPP_SCHEDULE_URL or "https://ktmu-schedule-bot-plqd-one.vercel.app/"
 
     if week_days:
         b64_data = pack_schedule_for_webapp(

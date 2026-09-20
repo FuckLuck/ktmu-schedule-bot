@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     THROTTLING_RATE_LIMIT: float = 0.8
     ADMIN_IDS_RAW: str = "870396858"
     WEBAPP_CAMPUS_URL: str = os.getenv("WEBAPP_CAMPUS_URL", "")
-    WEBAPP_SCHEDULE_URL: str = os.getenv("WEBAPP_SCHEDULE_URL", "https://fuckluck.github.io/ktmu-schedule-bot/webapp/")
+    WEBAPP_SCHEDULE_URL: str = os.getenv("WEBAPP_SCHEDULE_URL", "https://ktmu-schedule-bot-plqd-one.vercel.app/")
     WEB_SERVER_HOST: str = os.getenv("WEB_SERVER_HOST", "0.0.0.0")
     WEB_SERVER_PORT: int = int(os.getenv("WEB_SERVER_PORT", "8080"))
 
