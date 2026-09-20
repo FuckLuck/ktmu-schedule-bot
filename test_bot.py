@@ -2655,3 +2655,121 @@ async def test_voznesensky_bells_and_room_detection(test_db):
     notif_text = format_pair_notification(l5, "1-КПД-2")
     assert "15:20-16:45" in notif_text
     assert "Вознесенский пр., 44" in notif_text
+
+
+@pytest.mark.asyncio
+async def test_db_wal_mode_and_backup_creation(test_db, tmp_path):
+    """Тест включения WAL-режима и создания консистентного бэкапа базы."""
+    import aiosqlite
+    import sqlite3
+
+    # 1. Проверяем режим WAL (сохраняется в заголовке файла БД)
+    async with aiosqlite.connect(test_db.db_path) as conn:
+        cursor = await conn.execute("PRAGMA journal_mode;")
+        row = await cursor.fetchone()
+        journal_mode = row[0].lower() if row else ""
+        assert journal_mode == "wal"
+
+    # 2. Добавляем тестовые данные
+    await test_db.upsert_user(
+        user_id=111222,
+        group_id="grp_wal_test",
+        group_url="http://test",
+        group_name="1-ИС-WAL",
+    )
+
+    # 3. Создаем бэкап
+    backup_dir = tmp_path / "backups"
+    backup_file = await test_db.create_backup_file(backup_dir=str(backup_dir))
+    assert os.path.exists(backup_file)
+    assert backup_file.endswith(".db")
+
+    # 4. Проверяем целостность файла бэкапа
+    conn_b = sqlite3.connect(backup_file)
+    cur = conn_b.cursor()
+    cur.execute("SELECT group_id, group_name FROM users WHERE user_id = 111222")
+    user_row = cur.fetchone()
+    conn_b.close()
+    assert user_row is not None
+    assert user_row[0] == "grp_wal_test"
+    assert user_row[1] == "1-ИС-WAL"
+
+
+@pytest.mark.asyncio
+async def test_parser_persistent_session():
+    """Тест пула соединений aiohttp.ClientSession в TimetableParser."""
+    from timetable_parser import TimetableParser
+    parser = TimetableParser()
+    try:
+        session1 = await parser.get_session()
+        assert session1 is not None
+        assert not session1.closed
+
+        # Повторный вызов возвращает ту же самую сессию
+        session2 = await parser.get_session()
+        assert session1 is session2
+
+        # Закрытие сессии
+        await parser.close()
+        assert session1.closed
+        assert parser._session is None
+    finally:
+        await parser.close()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_prewarm_and_weekly_backup(test_db):
+    """Тест утреннего тихого прогрева кэша в 07:55 и автобэкапа в ЛС админу."""
+    from scheduler import NotificationScheduler
+    from aiogram import Bot
+    from config import config
+
+    mock_bot = MagicMock(spec=Bot)
+    mock_bot.send_document = AsyncMock()
+
+    scheduler = NotificationScheduler(bot=mock_bot, database=test_db)
+
+    # 1. Проверяем prewarm_morning_cache
+    await test_db.upsert_user(
+        user_id=333444,
+        group_id="grp_prewarm",
+        group_url="http://example.com/pw",
+        group_name="1-ИС-PW",
+    )
+    with patch("timetable_parser.timetable_parser.fetch_day_schedule", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = {"lessons": []}
+        await scheduler.prewarm_morning_cache()
+        assert mock_fetch.called
+
+    # 2. Проверяем send_weekly_db_backup
+    with patch.object(config, "ADMIN_IDS_RAW", "870396858"):
+        await scheduler.send_weekly_db_backup()
+        assert mock_bot.send_document.called
+        call_kwargs = mock_bot.send_document.call_args[1]
+        assert call_kwargs["chat_id"] == 870396858
+        assert "document" in call_kwargs
+
+
+@pytest.mark.asyncio
+async def test_chat_action_safe_helper():
+    """Тест безопасной отправки индикаторов ChatAction (typing, upload_photo)."""
+    from handlers import send_chat_action_safe
+    from aiogram.enums import ChatAction
+    from aiogram import Bot
+
+    mock_bot = MagicMock(spec=Bot)
+    mock_bot.send_chat_action = AsyncMock()
+
+    # 1. typing без message_thread_id
+    await send_chat_action_safe(mock_bot, 12345, ChatAction.TYPING)
+    mock_bot.send_chat_action.assert_called_with(chat_id=12345, action=ChatAction.TYPING)
+
+    # 2. upload_photo с message_thread_id
+    await send_chat_action_safe(mock_bot, 12345, ChatAction.UPLOAD_PHOTO, message_thread_id=99)
+    mock_bot.send_chat_action.assert_called_with(chat_id=12345, action=ChatAction.UPLOAD_PHOTO, message_thread_id=99)
+
+    # 3. При None боте или исключении — не падает
+    await send_chat_action_safe(None, 12345)
+    mock_bot.send_chat_action.side_effect = Exception("Telegram API error")
+    await send_chat_action_safe(mock_bot, 12345)
+

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from datetime import date, datetime, time, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -513,6 +514,82 @@ class NotificationScheduler:
         except Exception as e:
             logger.error("Ошибка при автоочистке заметок: %s", e)
 
+    async def prewarm_morning_cache(self) -> None:
+        """
+        Тихий утренний прогрев кэша в 07:55 (за 5 минут до утренней рассылки в 08:00).
+        Загружает расписание на сегодня для всех активных групп колледжа в RAM и SQLite,
+        чтобы в 08:00 рассылка вылетала мгновенно без обращений к сайту КТМУ.
+        """
+        logger.info("Запуск тихого утреннего прогрева кэша в 07:55...")
+        try:
+            today = self.get_current_date()
+            subscribers = await self._get_all_subscribers_by_group()
+            active_group_ids = list(subscribers.keys())
+            if not active_group_ids:
+                logger.info("Тихий прогрев 07:55: активных групп нет.")
+                return
+
+            logger.info("Тихий прогрев 07:55 для %d активных групп...", len(active_group_ids))
+            for gid in active_group_ids:
+                try:
+                    await timetable_parser.fetch_day_schedule(
+                        group_id=gid,
+                        target_date=today,
+                        force_refresh=True
+                    )
+                except Exception as e:
+                    logger.debug("Ошибка прогрева группы %s: %s", gid, e)
+                await asyncio.sleep(0.05)
+
+            logger.info("Тихий утренний прогрев кэша в 07:55 успешно завершен!")
+        except Exception as e:
+            logger.error("Ошибка при тихом прогреве кэша в 07:55: %s", e)
+
+    async def send_weekly_db_backup(self) -> None:
+        """
+        Еженедельный автоматический бэкап базы данных SQLite в ЛС администратору.
+        Запускается каждое воскресенье в 04:30 утра.
+        """
+        logger.info("Запуск еженедельного автобэкапа базы данных...")
+        backup_path = None
+        try:
+            admin_ids = config.ADMIN_IDS
+            if not admin_ids:
+                logger.warning("Автобэкап БД: список ADMIN_IDS пуст.")
+                return
+
+            main_admin_id = admin_ids[0]
+            backup_path = await self.db.create_backup_file()
+
+            from aiogram.types import FSInputFile
+            now_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+            stats = await self.db.get_admin_stats()
+            caption = (
+                f"📦 <b>Автоматический еженедельный бэкап базы данных КТМУ</b>\n\n"
+                f"📅 <b>Дата:</b> {now_str}\n"
+                f"👥 <b>Пользователей в базе:</b> {stats.get('total_users', 0)}\n"
+                f"💬 <b>Привязанных чатов:</b> {stats.get('total_chats', 0)}\n"
+                f"👑 <b>Старост:</b> {stats.get('total_starostas', 0)}\n"
+                f"📝 <b>Записей Д/З:</b> {stats.get('total_hw', 0)}\n\n"
+                f"<i>Файл содержит полный консистентный снимок SQLite (включая WAL журнал).</i>"
+            )
+            doc = FSInputFile(backup_path, filename=os.path.basename(backup_path))
+            await self.bot.send_document(
+                chat_id=main_admin_id,
+                document=doc,
+                caption=caption,
+                parse_mode="HTML"
+            )
+            logger.info("Еженедельный автобэкап БД успешно отправлен администратору %d!", main_admin_id)
+        except Exception as e:
+            logger.error("Ошибка при отправке еженедельного автобэкапа БД: %s", e)
+        finally:
+            if backup_path and os.path.exists(backup_path):
+                try:
+                    os.remove(backup_path)
+                except Exception:
+                    pass
+
     # -------------------------------------------------------------------------
     # ИНИЦИАЛИЗАЦИЯ И СТАРТ
     # -------------------------------------------------------------------------
@@ -581,6 +658,24 @@ class NotificationScheduler:
             id="daily_notes_cleanup_04_00",
             replace_existing=True,
             misfire_grace_time=600,
+        )
+
+        # 7. Тихий утренний прогрев кэша в 07:55 перед утренней рассылкой в 08:00
+        self.scheduler.add_job(
+            self.prewarm_morning_cache,
+            trigger=CronTrigger(hour=7, minute=55, timezone=self.tz),
+            id="prewarm_morning_cache_07_55",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+
+        # 8. Еженедельный автоматический бэкап базы данных в ЛС админу по воскресеньям в 04:30
+        self.scheduler.add_job(
+            self.send_weekly_db_backup,
+            trigger=CronTrigger(day_of_week="sun", hour=4, minute=30, timezone=self.tz),
+            id="weekly_db_backup_sunday_04_30",
+            replace_existing=True,
+            misfire_grace_time=3600,
         )
 
         self.scheduler.start()

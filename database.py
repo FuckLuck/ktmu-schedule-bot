@@ -29,6 +29,10 @@ class Database:
         """
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute("PRAGMA journal_mode=WAL;")
+            await db.execute("PRAGMA synchronous=NORMAL;")
+            await db.execute("PRAGMA busy_timeout=10000;")
+            await db.execute("PRAGMA temp_store=MEMORY;")
+            await db.execute("PRAGMA cache_size=-64000;")
             await db.execute("PRAGMA foreign_keys=ON;")
 
             # 1. Таблица users
@@ -1574,8 +1578,34 @@ class Database:
             "notif_enabled": notif_enabled,
         }
 
+    async def create_backup_file(self, backup_dir: Optional[str] = None) -> str:
+        """
+        Создает консистентный снимок базы данных SQLite на диск даже в режиме WAL
+        с принудительным сохранением буфера журнала (wal_checkpoint).
+        Возвращает путь к созданному файлу бэкапа.
+        """
+        if not backup_dir:
+            backup_dir = os.path.join(os.path.dirname(self.db_path) or ".", "backups")
+        os.makedirs(backup_dir, exist_ok=True)
 
+        now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = os.path.abspath(os.path.join(backup_dir, f"ktmu_bot_backup_{now_str}.db"))
 
+        async with aiosqlite.connect(self.db_path) as db:
+            try:
+                await db.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except Exception as e:
+                logger.warning("Ошибка wal_checkpoint при создании бэкапа: %s", e)
+
+            try:
+                escaped_path = backup_path.replace("'", "''")
+                await db.execute(f"VACUUM INTO '{escaped_path}';")
+            except Exception as e:
+                logger.info("VACUUM INTO не поддерживается или завершился с ошибкой (%s), используется shutil.copy2", e)
+                import shutil
+                shutil.copy2(self.db_path, backup_path)
+
+        return backup_path
 
 
 # Глобальный синглтон базы данных

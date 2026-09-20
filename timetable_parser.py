@@ -88,6 +88,33 @@ class TimetableParser:
         self._site_data_cache_time: Optional[datetime] = None
         # Горячий RAM-кэш готового расписания на день: (group_id, date_str) -> (data, timestamp)
         self._ram_day_cache: dict[tuple[str, str], tuple[dict[str, Any], datetime]] = {}
+        # Долгоживущая переиспользуемая HTTP-сессия с пулом соединений
+        self._session: Optional[aiohttp.ClientSession] = None
+
+    async def get_session(self) -> aiohttp.ClientSession:
+        """
+        Возвращает долгоживущую HTTP-сессию aiohttp с пулом соединений (connection pooling) и Keep-Alive.
+        Устраняет накладные расходы на постоянное создание сокетов, DNS-резолвинг и TLS handshakes.
+        """
+        if self._session is None or self._session.closed:
+            connector = aiohttp.TCPConnector(
+                limit=100,
+                limit_per_host=20,
+                keepalive_timeout=60,
+            )
+            self._session = aiohttp.ClientSession(
+                connector=connector,
+                headers=self.headers,
+                timeout=aiohttp.ClientTimeout(total=20, connect=5),
+            )
+        return self._session
+
+    async def close(self) -> None:
+        """Корректно закрывает активную сессию и пул соединений при остановке бота."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
+            logger.info("Сетевой пул соединений TimetableParser успешно закрыт.")
 
     def clear_ram_cache(self) -> None:
         """Очищает оперативный кэш расписания в памяти."""
@@ -429,21 +456,21 @@ class TimetableParser:
         logger.info("Запрос расписания с сайта для группы %s на %s ...", group_id, date_str)
         schedule_data: Optional[dict[str, Any]] = None
 
-        async with aiohttp.ClientSession() as session:
-            try:
-                # Первым делом запрашиваем API модели (быстро, структурированно, без задержек)
-                schedule_data = await self._parse_schedule_from_api(session, group_id, target_date)
-            except Exception as e:
-                logger.warning("Ошибка получения расписания из API для группы %s: %s", group_id, e)
+        session = await self.get_session()
+        try:
+            # Первым делом запрашиваем API модели (быстро, структурированно, без задержек)
+            schedule_data = await self._parse_schedule_from_api(session, group_id, target_date)
+        except Exception as e:
+            logger.warning("Ошибка получения расписания из API для группы %s: %s", group_id, e)
 
-            # Если API вернул пустые пары или упал, и есть group_url, пробуем HTML как fallback
-            if (not schedule_data or not schedule_data.get("lessons")) and group_url:
-                try:
-                    html_data = await self._parse_schedule_from_html(session, group_url, target_date)
-                    if html_data and html_data.get("lessons"):
-                        schedule_data = html_data
-                except Exception as e:
-                    logger.debug("HTML fallback не удался: %s", e)
+        # Если API вернул пустые пары или упал, и есть group_url, пробуем HTML как fallback
+        if (not schedule_data or not schedule_data.get("lessons")) and group_url:
+            try:
+                html_data = await self._parse_schedule_from_html(session, group_url, target_date)
+                if html_data and html_data.get("lessons"):
+                    schedule_data = html_data
+            except Exception as e:
+                logger.debug("HTML fallback не удался: %s", e)
 
         if not schedule_data:
             schedule_data = {

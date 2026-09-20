@@ -97,6 +97,7 @@ async def on_shutdown(bot: Bot) -> None:
     if scheduler_service:
         scheduler_service.shutdown()
 
+    await timetable_parser.close()
     await bot.session.close()
     logger.info("Бот успешно остановлен.")
 

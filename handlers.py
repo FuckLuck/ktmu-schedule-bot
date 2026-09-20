@@ -8,6 +8,7 @@ from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
+from aiogram.enums import ChatAction
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -112,6 +113,24 @@ async def _get_bot_username(bot: Optional[Bot]) -> str:
     except Exception:
         pass
     return "schedulektmubot"
+
+
+async def send_chat_action_safe(
+    bot: Optional[Bot],
+    chat_id: int,
+    action: str = ChatAction.TYPING,
+    message_thread_id: Optional[int] = None,
+) -> None:
+    """Безопасно отправляет индикатор действия (typing, upload_photo) в чат, игнорируя сетевые ошибки."""
+    if not bot:
+        return
+    try:
+        kwargs: dict[str, Any] = {"chat_id": chat_id, "action": action}
+        if message_thread_id is not None:
+            kwargs["message_thread_id"] = message_thread_id
+        await bot.send_chat_action(**kwargs)
+    except Exception:
+        pass
 
 
 # Горячий RAM-кэш file_id изображений расписания: (group_id, date_str) -> file_id
@@ -961,6 +980,7 @@ async def send_day_schedule_with_image(
             file_id = None
 
     # 2. Если в кэше нет или отправка по file_id не удалась -> генерируем изображение через render_schedule_image
+    await send_chat_action_safe(bot, chat_id, ChatAction.UPLOAD_PHOTO, message_thread_id)
     bot_username = await _get_bot_username(bot)
     img_io = render_schedule_image(sched, group_name, bot_username)
     photo_file = BufferedInputFile(
@@ -1052,6 +1072,7 @@ async def handle_schedule_today(message: Message, database: Database = default_d
     group_url = user["group_url"]
     is_group = message.chat.type in ("group", "supergroup")
     thread_id = getattr(message, "message_thread_id", None)
+    await send_chat_action_safe(message.bot, message.chat.id, ChatAction.TYPING, thread_id)
 
     wait_msg = await message.answer("⏳ <i>Загружаю расписание...</i>", parse_mode="HTML")
 
@@ -1121,6 +1142,7 @@ async def handle_schedule_tomorrow(message: Message, database: Database = defaul
     group_url = user["group_url"]
     is_group = message.chat.type in ("group", "supergroup")
     thread_id = getattr(message, "message_thread_id", None)
+    await send_chat_action_safe(message.bot, message.chat.id, ChatAction.TYPING, thread_id)
 
     wait_msg = await message.answer("⏳ <i>Загружаю расписание на завтра...</i>", parse_mode="HTML")
 
@@ -1183,6 +1205,11 @@ async def cb_schedule_nav(
     try:
         now_dt = get_current_college_time()
         today = now_dt.date()
+        thread_id = getattr(callback.message, "message_thread_id", None)
+        if action == "image":
+            await send_chat_action_safe(callback.bot, callback.message.chat.id, ChatAction.UPLOAD_PHOTO, thread_id)
+        else:
+            await send_chat_action_safe(callback.bot, callback.message.chat.id, ChatAction.TYPING, thread_id)
 
         if action in ("day_to", "today", "tomorrow"):
             target_date = today
@@ -1300,6 +1327,8 @@ async def handle_schedule_week(message: Message, database: Database = default_db
     group_id = user["group_id"]
     group_name = user["group_name"]
     group_url = user["group_url"]
+    thread_id = getattr(message, "message_thread_id", None)
+    await send_chat_action_safe(message.bot, message.chat.id, ChatAction.TYPING, thread_id)
 
     wait_msg = await message.answer("⏳ <i>Формирую расписание на неделю...</i>", parse_mode="HTML")
 
@@ -1594,6 +1623,8 @@ async def _execute_teacher_search(message: Message, query: str, database: Databa
     Выполняет сканирование расписания в timetable_cache и выводит список пар преподавателя
     с объединением подгрупп, исключая дублирование одинаковых занятий.
     """
+    thread_id = getattr(message, "message_thread_id", None)
+    await send_chat_action_safe(message.bot, message.chat.id, ChatAction.TYPING, thread_id)
     wait_msg = await message.answer(f"🔍 <i>Ищу расписание для «{query}» по всем группам...</i>", parse_mode="HTML")
 
     try:
@@ -3818,6 +3849,8 @@ async def cmd_my_teachers(message: Message, database: Database = default_db):
     group_name = user.get("group_name", "не выбрана")
     group_url = user.get("group_url", "")
     lang = user.get("language", "ru")
+    thread_id = getattr(message, "message_thread_id", None)
+    await send_chat_action_safe(message.bot, message.chat.id, ChatAction.TYPING, thread_id)
 
     wait_msg = await message.answer("🔍 <i>Загружаю список преподавателей вашей группы...</i>", parse_mode="HTML")
 
@@ -3870,6 +3903,8 @@ async def cb_my_teacher(callback: CallbackQuery, callback_data: MyTeacherCallbac
 
     group_id = user["group_id"]
     group_url = user.get("group_url", "")
+    thread_id = getattr(callback.message, "message_thread_id", None)
+    await send_chat_action_safe(callback.bot, callback.message.chat.id, ChatAction.TYPING, thread_id)
 
     try:
         week_sched = await timetable_parser.fetch_week_schedule(
