@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/", "destination": "/webapp/index.html" },
+    { "source": "/webapp", "destination": "/webapp/index.html" },
+    { "source": "/webapp/(.*)", "destination": "/webapp/$1" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET,OPTIONS,POST" }
+      ]
+    }
+  ]
+}
