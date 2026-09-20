@@ -501,7 +501,7 @@ def get_main_reply_keyboard(
             KeyboardButton(text="👑 Админ-панель" if lang == "ru" else "👑 Admin Panel")
         )
 
-    return builder.as_markup(resize_keyboard=True)
+    return builder.as_markup(resize_keyboard=True, is_persistent=True)
 
 
 def get_settings_info_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
@@ -528,7 +528,7 @@ def get_settings_info_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
     builder.row(
         KeyboardButton(text="⬅️ Главное меню" if lang == "ru" else "⬅️ Main menu")
     )
-    return builder.as_markup(resize_keyboard=True)
+    return builder.as_markup(resize_keyboard=True, is_persistent=True)
 
 
 def get_group_menu_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
@@ -554,7 +554,7 @@ def get_group_menu_keyboard(lang: str = "ru") -> ReplyKeyboardMarkup:
     builder.row(
         KeyboardButton(text="⬅️ Главное меню" if lang == "ru" else "⬅️ Main menu")
     )
-    return builder.as_markup(resize_keyboard=True)
+    return builder.as_markup(resize_keyboard=True, is_persistent=True)
 
 
 def get_starosta_inline_keyboard(

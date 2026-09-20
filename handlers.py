@@ -18,7 +18,9 @@ from aiogram.types import (
     ChatMemberUpdated,
     FSInputFile,
     InputMediaPhoto,
+    MenuButtonWebApp,
     Message,
+    WebAppInfo,
 )
 
 from config import config
@@ -349,6 +351,69 @@ async def cmd_set_group(message: Message, database: Database = default_db):
     )
 
 
+async def sync_user_menu_button(
+    bot: Bot,
+    user_id: int,
+    database: Database = default_db,
+) -> Optional[str]:
+    """
+    Обновляет персональную кнопку MenuButtonWebApp ('📱 Расписание') в Telegram-чате пользователя,
+    зашивая в нее актуальную выбранную группу, расписание недели и пропуски.
+    """
+    try:
+        user = await database.get_user(user_id)
+        if not user or not user.get("group_id"):
+            return None
+
+        group_id = user["group_id"]
+        group_name = user.get("group_name", "Моя группа")
+        subgroup = user.get("subgroup", 0)
+
+        today = date.today()
+        week_schedule = []
+        try:
+            week_schedule = await timetable_parser.fetch_week_schedule(
+                group_id=group_id, start_date=today
+            )
+        except Exception as e:
+            logger.warning("sync_user_menu_button: ошибка загрузки расписания: %s", e)
+
+        sched_sample = week_schedule[0] if week_schedule else {}
+        week_num = sched_sample.get("week_number", 4)
+        is_even = sched_sample.get("is_even", False)
+
+        skipped_list = []
+        if week_schedule:
+            for d in week_schedule:
+                d_date = d.get("date")
+                if d_date:
+                    u_skips = await database.get_skipped_pairs(user_id, d_date)
+                    for p_num in u_skips:
+                        skipped_list.append(f"{d_date}:{p_num}")
+
+        webapp_url = build_webapp_url(
+            group_name=group_name,
+            subgroup=subgroup,
+            week_days=week_schedule if week_schedule else None,
+            week_number=week_num,
+            is_even=is_even,
+            user_id=user_id,
+            skipped_pairs=skipped_list if skipped_list else None,
+        )
+
+        await bot.set_chat_menu_button(
+            chat_id=user_id,
+            menu_button=MenuButtonWebApp(
+                text="📱 Расписание",
+                web_app=WebAppInfo(url=webapp_url),
+            ),
+        )
+        return webapp_url
+    except Exception as e:
+        logger.warning("sync_user_menu_button: не удалось обновить кнопку меню для %s: %s", user_id, e)
+        return None
+
+
 @router.message(CommandStart(), StateFilter("*"))
 async def cmd_start(message: Message, state: Optional[FSMContext] = None, database: Database = default_db):
     """
@@ -430,6 +495,8 @@ async def cmd_start(message: Message, state: Optional[FSMContext] = None, databa
             reply_markup=kb,
             parse_mode="HTML"
         )
+        if message.bot and user.get("group_id"):
+            asyncio.create_task(sync_user_menu_button(message.bot, user_id, database))
 
 
 @router.callback_query(LanguageCallback.filter())
@@ -785,6 +852,8 @@ async def cb_select_lead_time(
     )
     await callback.message.answer(welcome_text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
+    if callback.bot:
+        asyncio.create_task(sync_user_menu_button(callback.bot, user_id, database))
 
 
 # -------------------------------------------------------------------------
@@ -4898,6 +4967,8 @@ async def cb_subgroup(
     except Exception:
         pass
     await callback.answer(f"Сохранено: {sub_label}")
+    if callback.bot:
+        asyncio.create_task(sync_user_menu_button(callback.bot, user_id, database))
 
 
 # -------------------------------------------------------------------------

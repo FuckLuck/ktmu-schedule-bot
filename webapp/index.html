@@ -23,7 +23,10 @@
         <div class="college-brand">
           <div class="brand-badge">КТМУ</div>
           <div class="brand-info">
-            <h1 id="group-title" class="group-title">Загрузка...</h1>
+            <div class="group-title-wrapper" id="group-switcher-trigger" title="Нажмите, чтобы сменить группу">
+              <h1 id="group-title" class="group-title">Загрузка...</h1>
+              <span class="group-chevron">▼</span>
+            </div>
             <span id="week-badge" class="week-badge">Учебная неделя</span>
           </div>
         </div>
@@ -114,6 +117,22 @@
       </div>
       <p class="footer-note">Колледж телекоммуникаций СПбГУТ • Расписание пар</p>
     </footer>
+  </div>
+
+  <!-- Модальное окно выбора группы -->
+  <div id="group-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Выберите группу</h3>
+        <button id="close-group-modal" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">Выберите вашу учебную группу в колледже КТМУ:</p>
+        <div class="group-select-list" id="group-select-list">
+          <!-- Генерируется через JS -->
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Toast всплывающие уведомления -->

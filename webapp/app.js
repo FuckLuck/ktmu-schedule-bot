@@ -89,26 +89,33 @@
     }
 
     // 2. Попытка чтения из localStorage
+    const savedGroup = localStorage.getItem('ktmu_selected_group') || '1-КСД-1';
     const cached = localStorage.getItem('ktmu_schedule_cache');
     if (cached) {
       try {
         const parsed = JSON.parse(cached);
-        applyParsedData(parsed);
-        return;
+        if (parsed && (parsed.group_name === savedGroup || parsed.group === savedGroup)) {
+          applyParsedData(parsed);
+          return;
+        }
       } catch (e) {
         console.warn('Ошибка кэша:', e);
       }
     }
 
-    // 3. Fallback демонстрационные данные
-    applyMockData();
+    // 3. Fallback реальное расписание выбранной группы
+    applyMockData(savedGroup);
   }
 
   function applyParsedData(data) {
-    state.groupName = data.group_name || data.group || 'Моя группа';
+    state.groupName = data.group_name || data.group || localStorage.getItem('ktmu_selected_group') || '1-КСД-1';
     state.weekNumber = data.week_number || 4;
     state.isEvenWeek = !!data.is_even;
     state.weekDays = data.days || [];
+    try {
+      localStorage.setItem('ktmu_selected_group', state.groupName);
+      localStorage.setItem('ktmu_schedule_cache', JSON.stringify(data));
+    } catch (e) {}
     if (data.user_id) {
       state.userId = parseInt(data.user_id, 10);
       try {
@@ -190,18 +197,163 @@
     } catch (e) {}
   }
 
-  function applyMockData() {
-    state.groupName = '1-КПД-2';
-    state.weekNumber = 4;
-    state.isEvenWeek = true;
-
-    // Генерируем учебную неделю от текущего понедельника
-    const now = new Date();
-    const dayOfWeek = (now.getDay() + 6) % 7; // 0 = Пн, 6 = Вс
-    const monday = new Date(now);
-    monday.setDate(now.getDate() - dayOfWeek);
-
-    const realScheduleByDay = [
+  const REAL_SCHEDULES = {
+    '1-КСД-1': [
+      // Пн (день 0)
+      [
+        {
+          pair_number: 2,
+          time: '10:10-11:40',
+          subject: 'Правовое и документ. обеспечение управления страховой орг.',
+          lesson_type: 'Практика',
+          room: '21',
+          teacher: 'Круглов И.В.',
+          subgroup: 0
+        },
+        {
+          pair_number: 3,
+          time: '11:50-13:20',
+          subject: 'Основы экономической теории',
+          lesson_type: 'Практика',
+          room: '51',
+          teacher: 'Пономарченко А.Е.',
+          subgroup: 0
+        }
+      ],
+      // Вт (день 1)
+      [
+        {
+          pair_number: 3,
+          time: '11:50-13:20',
+          subject: 'Математика',
+          lesson_type: 'Лекция',
+          room: 'Дистант',
+          teacher: 'Братищева В.А.',
+          subgroup: 0
+        },
+        {
+          pair_number: 4,
+          time: '14:00-15:30',
+          subject: 'Психология общения',
+          lesson_type: 'Лекция',
+          room: 'Дистант',
+          teacher: 'Гречканева А.Г.',
+          subgroup: 0
+        },
+        {
+          pair_number: 5,
+          time: '15:40-17:10',
+          subject: 'Иностранный язык в проф. деятельности',
+          lesson_type: 'Практика',
+          room: 'Дистант',
+          teacher: 'Сорваль М.П.',
+          subgroup: 0
+        },
+        {
+          pair_number: 6,
+          time: '17:20-18:50',
+          subject: 'Безопасность жизнедеятельности',
+          lesson_type: 'Практика',
+          room: 'Дистант',
+          teacher: 'Михайлов И.К.',
+          subgroup: 0
+        }
+      ],
+      // Ср (день 2)
+      [
+        {
+          pair_number: 2,
+          time: '10:10-11:40',
+          subject: 'Физическая культура',
+          lesson_type: 'Практика',
+          room: 'Спортзал',
+          teacher: 'Кузнецов Д.М.',
+          subgroup: 0
+        },
+        {
+          pair_number: 3,
+          time: '11:50-13:20',
+          subject: 'Физическая культура',
+          lesson_type: 'Практика',
+          room: 'Спортзал',
+          teacher: 'Кузнецов Д.М.',
+          subgroup: 0
+        }
+      ],
+      // Чт (день 3)
+      [
+        {
+          pair_number: 2,
+          time: '10:10-11:40',
+          subject: 'Основы финансовой грамотности',
+          lesson_type: 'Практика',
+          room: '38',
+          teacher: 'Соколова Е.Н.',
+          subgroup: 0
+        },
+        {
+          pair_number: 3,
+          time: '11:50-13:20',
+          subject: 'Страховое дело',
+          lesson_type: 'Практика',
+          room: '39',
+          teacher: 'Круглов И.В.',
+          subgroup: 0
+        },
+        {
+          pair_number: 4,
+          time: '14:00-15:30',
+          subject: 'Математика',
+          lesson_type: 'Практика',
+          room: '3',
+          teacher: 'Братищева В.А.',
+          subgroup: 0
+        }
+      ],
+      // Пт (день 4)
+      [
+        {
+          pair_number: 5,
+          time: '15:40-17:10',
+          subject: 'Информационные технологии в проф. деят.',
+          lesson_type: 'Практика',
+          room: 'Дистант',
+          teacher: 'Федорова О.С.',
+          subgroup: 0
+        },
+        {
+          pair_number: 6,
+          time: '17:20-18:50',
+          subject: 'Информационные технологии в проф. деят.',
+          lesson_type: 'Лаб',
+          room: 'Дистант',
+          teacher: 'Федорова О.С.',
+          subgroup: 0
+        }
+      ],
+      // Сб (день 5)
+      [
+        {
+          pair_number: 3,
+          time: '11:50-13:20',
+          subject: 'История',
+          lesson_type: 'Лекция',
+          room: 'Дистант',
+          teacher: 'Иванова Е.В.',
+          subgroup: 0
+        },
+        {
+          pair_number: 4,
+          time: '14:00-15:30',
+          subject: 'Русский язык',
+          lesson_type: 'Практика',
+          room: 'Дистант',
+          teacher: 'Ковалева Н.С.',
+          subgroup: 0
+        }
+      ]
+    ],
+    '1-КПД-2': [
       // Пн (день 0)
       [
         {
@@ -356,7 +508,22 @@
       ],
       // Сб (день 5)
       []
-    ];
+    ]
+  };
+
+  function applyMockData(groupName) {
+    const targetGroup = groupName || state.groupName || localStorage.getItem('ktmu_selected_group') || '1-КСД-1';
+    state.groupName = targetGroup;
+    state.weekNumber = 4;
+    state.isEvenWeek = true;
+
+    // Генерируем учебную неделю от текущего понедельника
+    const now = new Date();
+    const dayOfWeek = (now.getDay() + 6) % 7; // 0 = Пн, 6 = Вс
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - dayOfWeek);
+
+    const lessonsByDay = REAL_SCHEDULES[targetGroup] || REAL_SCHEDULES['1-КСД-1'];
 
     const days = [];
     for (let i = 0; i < 6; i++) {
@@ -366,10 +533,52 @@
       days.push({
         date: isoDate,
         day_name: RU_WEEKDAYS[i],
-        lessons: realScheduleByDay[i] || []
+        lessons: lessonsByDay[i] || []
       });
     }
     state.weekDays = days;
+  }
+
+  function switchGroup(groupName) {
+    applyMockData(groupName);
+    try {
+      localStorage.setItem('ktmu_selected_group', groupName);
+      localStorage.removeItem('ktmu_schedule_cache');
+    } catch (e) {}
+    renderHeader();
+    renderDaysNav();
+    renderSchedule();
+    updateLiveWidget();
+    renderGroupModalList();
+    showToast(`Выбрана группа ${groupName} ✅`);
+  }
+
+  function renderGroupModalList() {
+    const listEl = document.getElementById('group-select-list');
+    if (!listEl) return;
+    const availableGroups = ['1-КСД-1', '1-КПД-2', '1-КИД-3', '4-КРД-36'];
+    listEl.innerHTML = '';
+    availableGroups.forEach(grp => {
+      const btn = document.createElement('button');
+      btn.className = `group-select-btn ${grp === state.groupName ? 'active' : ''}`;
+      btn.textContent = grp;
+      btn.onclick = () => {
+        switchGroup(grp);
+        closeGroupModal();
+      };
+      listEl.appendChild(btn);
+    });
+  }
+
+  function openGroupModal() {
+    renderGroupModalList();
+    const modal = document.getElementById('group-modal');
+    if (modal) modal.style.display = 'flex';
+  }
+
+  function closeGroupModal() {
+    const modal = document.getElementById('group-modal');
+    if (modal) modal.style.display = 'none';
   }
 
   // --- Определение активного дня по умолчанию ---
@@ -747,6 +956,27 @@
       renderSchedule();
       updateLiveWidget();
     });
+
+    // Модальное окно выбора группы
+    const switcherTrigger = document.getElementById('group-switcher-trigger');
+    if (switcherTrigger) {
+      switcherTrigger.addEventListener('click', () => {
+        triggerHaptic('light');
+        openGroupModal();
+      });
+    }
+
+    const closeBtn = document.getElementById('close-group-modal');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', closeGroupModal);
+    }
+
+    const modalOverlay = document.getElementById('group-modal');
+    if (modalOverlay) {
+      modalOverlay.addEventListener('click', (e) => {
+        if (e.target === modalOverlay) closeGroupModal();
+      });
+    }
   }
 
   // --- Инициализация приложения ---
