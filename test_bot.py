@@ -2773,3 +2773,237 @@ async def test_chat_action_safe_helper():
     mock_bot.send_chat_action.side_effect = Exception("Telegram API error")
     await send_chat_action_safe(mock_bot, 12345)
 
+
+def test_compute_schedule_diff():
+    """Тест определения замен, отмен, переносов кабинетов и добавления пар."""
+    from timetable_parser import compute_schedule_diff
+
+    old_sched = {
+        "lessons": [
+            {
+                "pair_number": 1,
+                "subgroup": 0,
+                "subject": "История",
+                "room": "101",
+                "teacher": "Петров П.П.",
+                "time": "08:30-10:00",
+            },
+            {
+                "pair_number": 2,
+                "subgroup": 0,
+                "subject": "Философия",
+                "room": "204",
+                "teacher": "Сидоров С.С.",
+                "time": "10:10-11:40",
+            },
+            {
+                "pair_number": 3,
+                "subgroup": 0,
+                "subject": "Физкультура",
+                "room": "Спортзал",
+                "teacher": "Быков Б.Б.",
+                "time": "11:50-13:20",
+            },
+        ]
+    }
+
+    new_sched = {
+        "lessons": [
+            # Пара 1: перенос аудитории и смена преподавателя
+            {
+                "pair_number": 1,
+                "subgroup": 0,
+                "subject": "История",
+                "room": "305",
+                "teacher": "Иванов И.И.",
+                "time": "08:30-10:00",
+            },
+            # Пара 2: замена предмета на Базы данных
+            {
+                "pair_number": 2,
+                "subgroup": 0,
+                "subject": "Базы данных",
+                "room": "308",
+                "teacher": "Смирнов А.А.",
+                "time": "10:10-11:40",
+            },
+            # Пара 3 (Физкультура) отменена
+            # Пара 4 добавлена
+            {
+                "pair_number": 4,
+                "subgroup": 0,
+                "subject": "Программирование",
+                "room": "401",
+                "teacher": "Кузнецов К.К.",
+                "time": "14:00-15:30",
+            },
+        ]
+    }
+
+    diffs = compute_schedule_diff(old_sched, new_sched)
+    assert len(diffs) == 4
+
+    diff_text = "\n".join(diffs)
+    # Пара 1: комната и препод
+    assert "305" in diff_text and "Иванов И.И." in diff_text
+    # Пара 2: замена предмета
+    assert "Замена предмета" in diff_text and "Базы данных" in diff_text
+    # Пара 3: отменена
+    assert "ОТМЕНЕНА" in diff_text and "Физкультура" in diff_text
+    # Пара 4: добавлена
+    assert "ДОБАВЛЕНА" in diff_text and "Программирование" in diff_text
+
+
+def test_get_current_pair_status_info():
+    """Тест расчета статуса текущей пары в реальном времени."""
+    from timetable_parser import get_current_pair_status_info
+    from zoneinfo import ZoneInfo
+    tz = ZoneInfo("Europe/Moscow")
+
+    sched = {
+        "lessons": [
+            {
+                "pair_number": 1,
+                "subject": "Математика",
+                "room": "301",
+                "start_time": "08:30",
+                "end_time": "10:00",
+                "teacher": "Смирнов А.А.",
+            },
+            {
+                "pair_number": 2,
+                "subject": "Физика",
+                "room": "305",
+                "start_time": "10:10",
+                "end_time": "11:40",
+                "teacher": "Иванов И.И.",
+            },
+        ]
+    }
+
+    # 1. До пар: 07:45
+    dt_before = datetime(2026, 9, 21, 7, 45, tzinfo=tz)
+    res_before = get_current_pair_status_info(sched, dt_before, "1-ИС-2")
+    assert "Пары еще не начались" in res_before
+    assert "45 мин" in res_before
+    assert "Математика" in res_before
+
+    # 2. Во время 1-й пары: 09:15
+    dt_during = datetime(2026, 9, 21, 9, 15, tzinfo=tz)
+    res_during = get_current_pair_status_info(sched, dt_during, "1-ИС-2")
+    assert "Сейчас идет пара №1" in res_during
+    assert "45 мин" in res_during
+    assert "Следующая пара" in res_during
+    assert "Физика" in res_during
+
+    # 3. На перемене: 10:05 (между 10:00 и 10:10)
+    dt_break = datetime(2026, 9, 21, 10, 5, tzinfo=tz)
+    res_break = get_current_pair_status_info(sched, dt_break, "1-ИС-2")
+    assert "Сейчас перемена" in res_break
+    assert "5 мин" in res_break
+    assert "Физика" in res_break
+
+    # 4. После всех пар: 15:00
+    dt_after = datetime(2026, 9, 21, 15, 0, tzinfo=tz)
+    res_after = get_current_pair_status_info(sched, dt_after, "1-ИС-2")
+    assert "Все пары на сегодня завершились" in res_after
+
+    # 5. Выходной день / пустые пары
+    res_empty = get_current_pair_status_info({"lessons": []}, dt_before, "1-ИС-2")
+    assert "Сегодня занятий нет" in res_empty
+
+
+def test_generate_ics_calendar():
+    """Тест генерации файла iCalendar (.ics) RFC 5545."""
+    from timetable_parser import generate_ics_calendar
+
+    week_sched = [
+        {
+            "date": "2026-09-21",
+            "day_name": "Понедельник",
+            "lessons": [
+                {
+                    "pair_number": 1,
+                    "subject": "Архитектура ЭВМ",
+                    "room": "305",
+                    "start_time": "08:30",
+                    "end_time": "10:00",
+                    "teacher": "Козлов К.К.",
+                    "format": "Очно",
+                    "is_external": True,
+                    "location": "Вознесенский пр., 44",
+                }
+            ],
+        }
+    ]
+
+    ics_content = generate_ics_calendar(week_sched, "1-ИС-2")
+    assert "BEGIN:VCALENDAR" in ics_content
+    assert "VERSION:2.0" in ics_content
+    assert "BEGIN:VEVENT" in ics_content
+    assert "SUMMARY:Архитектура ЭВМ [305]" in ics_content
+    assert "LOCATION:каб. 305\\, Вознесенский пр.\\, 44" in ics_content
+    assert "DTSTART;TZID=Europe/Moscow:20260921T083000" in ics_content
+    assert "DTEND;TZID=Europe/Moscow:20260921T100000" in ics_content
+    assert "END:VEVENT" in ics_content
+    assert "END:VCALENDAR" in ics_content
+
+
+@pytest.mark.asyncio
+async def test_handlers_now_and_export_calendar(test_db):
+    """Тест обработчиков /now и /export_calendar."""
+    from handlers import handle_pair_now, handle_export_calendar
+    from aiogram.types import User, Chat, Message
+
+    # 1. Настраиваем пользователя
+    await test_db.upsert_user(
+        user_id=777888,
+        group_id="grp_now_test",
+        group_url="http://ktmu/grp",
+        group_name="1-ИС-99",
+    )
+
+    mock_msg = MagicMock(spec=Message)
+    mock_msg.from_user = User(id=777888, is_bot=False, first_name="Студент")
+    mock_msg.chat = Chat(id=777888, type="private")
+    mock_msg.message_thread_id = None
+    mock_msg.bot = MagicMock()
+    mock_msg.bot.send_chat_action = AsyncMock()
+    mock_msg.bot.send_document = AsyncMock()
+
+    wait_msg = MagicMock(spec=Message)
+    wait_msg.edit_text = AsyncMock()
+    wait_msg.delete = AsyncMock()
+    mock_msg.answer = AsyncMock(return_value=wait_msg)
+
+    # 2. Вызов handle_pair_now
+    sample_day = {
+        "lessons": [
+            {
+                "pair_number": 1,
+                "subject": "Тестирование ПО",
+                "room": "202",
+                "start_time": "08:30",
+                "end_time": "10:00",
+                "teacher": "Тестов Т.Т.",
+            }
+        ]
+    }
+    with patch("timetable_parser.timetable_parser.fetch_day_schedule", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = sample_day
+        await handle_pair_now(mock_msg, database=test_db)
+        assert wait_msg.edit_text.called
+        call_text = wait_msg.edit_text.call_args[0][0]
+        assert "1-ИС-99" in call_text
+
+    # 3. Вызов handle_export_calendar
+    with patch("timetable_parser.timetable_parser.fetch_week_schedule", new_callable=AsyncMock) as mock_fetch_w:
+        mock_fetch_w.return_value = [{"date": "2026-09-21", "lessons": sample_day["lessons"]}]
+        await handle_export_calendar(mock_msg, database=test_db)
+        assert mock_msg.bot.send_document.called
+        call_kwargs = mock_msg.bot.send_document.call_args[1]
+        assert call_kwargs["chat_id"] == 777888
+        assert "document" in call_kwargs
+        assert "iCalendar" in call_kwargs["caption"]
+
+

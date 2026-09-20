@@ -213,13 +213,15 @@ def get_schedule_bonch_keyboard(
     target_date: date,
     show_back_to_menu: bool = True,
     show_today_past: bool = False,
+    show_calendar: bool = False,
 ) -> InlineKeyboardMarkup:
     """
     Интерактивная BonchGo-сетка навигации под сообщением расписания:
     Ряд 1: [ ⬅️ 11.09 Пт ]  [ 13.09 Вс ➡️ ]
     Ряд 2: [ ⏪ 05.09 Сб ]  [ 19.09 Сб ⏩ ]
     Ряд 3: [ 🖼 Картинка ]  [ 📆 Вся неделя ]
-    Ряд 4: [ 🏠 В главное меню ]
+    Ряд 4: [ 📅 В календарь (.ics) ] (опционально)
+    Ряд 5: [ 🏠 В главное меню ]
     """
     builder = InlineKeyboardBuilder()
 
@@ -267,6 +269,15 @@ def get_schedule_bonch_keyboard(
             callback_data=ScheduleNavCallback(action="week", date_str=target_date.isoformat()).pack()
         ),
     )
+
+    # Кнопка экспорта в календарь
+    if show_calendar:
+        builder.row(
+            InlineKeyboardButton(
+                text="📅 В календарь (.ics)",
+                callback_data=ScheduleNavCallback(action="calendar", date_str=target_date.isoformat()).pack()
+            )
+        )
 
     # Дополнительная кнопка прошедших пар (если запрошено)
     if show_today_past:
@@ -461,18 +472,19 @@ def get_main_reply_keyboard(
         KeyboardButton(text="📅 На сегодня" if lang == "ru" else "📅 Today"),
         KeyboardButton(text="📆 На завтра" if lang == "ru" else "🌅 Tomorrow"),
     )
-    # Ряд 2: На неделю / Звонки
+    # Ряд 2: Где сейчас пара? / На неделю
     builder.row(
+        KeyboardButton(text="📍 Где сейчас пара?" if lang == "ru" else "📍 Where is pair now?"),
         KeyboardButton(text="🗓 На неделю" if lang == "ru" else "📆 Full Week"),
-        KeyboardButton(text="⏰ Звонки" if lang == "ru" else "⏰ Bells"),
     )
-    # Ряд 3: Меню группы (ДЗ, Чат, Заметки, Староста, Смена группы)
+    # Ряд 3: Звонки / Поиск преподавателя
+    builder.row(
+        KeyboardButton(text="⏰ Звонки" if lang == "ru" else "⏰ Bells"),
+        KeyboardButton(text="🔍 Поиск преподавателя" if lang == "ru" else "🔍 Teacher search"),
+    )
+    # Ряд 4: Меню группы (ДЗ, Чат, Заметки, Староста, Смена группы)
     builder.row(
         KeyboardButton(text="🎓 Меню группы (ДЗ / Староста)" if lang == "ru" else "🎓 Group menu (HW / Starosta)")
-    )
-    # Ряд 4: Поиск преподавателя
-    builder.row(
-        KeyboardButton(text="🔍 Поиск преподавателя" if lang == "ru" else "🔍 Teacher search"),
     )
     # Ряд 5: Уведомления и подменю настроек/связи
     builder.row(

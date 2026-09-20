@@ -3,9 +3,10 @@ import hashlib
 import json
 import logging
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any, Optional
 from urllib.parse import urljoin
+from zoneinfo import ZoneInfo
 
 import aiohttp
 from bs4 import BeautifulSoup
@@ -771,5 +772,366 @@ def format_pair_notification(lesson: dict[str, Any], group_name: str) -> str:
     return "\n".join(lines)
 
 
+def compute_schedule_diff(
+    old_sched: Optional[dict[str, Any]], new_sched: dict[str, Any]
+) -> list[str]:
+    """
+    Сравнивает старый и новый список пар на день и возвращает форматированный список изменений.
+    Определяет:
+    - Отмену пары
+    - Добавление пары
+    - Замену предмета
+    - Смену аудитории
+    - Смену преподавателя
+    - Изменение времени
+    """
+    if not old_sched or not isinstance(old_sched, dict):
+        return []
+
+    old_lessons = old_sched.get("lessons", [])
+    new_lessons = new_sched.get("lessons", [])
+
+    if not old_lessons and not new_lessons:
+        return []
+
+    def _make_key(l: dict[str, Any]) -> tuple[int, int]:
+        return (int(l.get("pair_number") or 0), int(l.get("subgroup") or 0))
+
+    old_map: dict[tuple[int, int], dict[str, Any]] = {}
+    for l in old_lessons:
+        old_map[_make_key(l)] = l
+
+    new_map: dict[tuple[int, int], dict[str, Any]] = {}
+    for l in new_lessons:
+        new_map[_make_key(l)] = l
+
+    all_keys = sorted(set(old_map.keys()) | set(new_map.keys()))
+    diffs: list[str] = []
+
+    for key in all_keys:
+        pair_num, sub = key
+        sub_str = f" [{sub} подгр.]" if sub else ""
+
+        if key in old_map and key not in new_map:
+            old_l = old_map[key]
+            subj = old_l.get("subject", "Занятие")
+            room = old_l.get("room", "")
+            room_str = f" (каб. {room})" if room and room != "—" else ""
+            diffs.append(f"❌ <b>Пара №{pair_num}{sub_str}</b>: <s>{subj}</s>{room_str} — <b>ОТМЕНЕНА</b>")
+
+        elif key not in old_map and key in new_map:
+            new_l = new_map[key]
+            subj = new_l.get("subject", "Занятие")
+            room = new_l.get("room", "")
+            t_str = new_l.get("time", "")
+            tch = new_l.get("teacher", "")
+            details = []
+            if t_str:
+                details.append(t_str)
+            if room and room != "—":
+                details.append(f"каб. {room}")
+            if tch and tch != "—":
+                details.append(tch)
+            info = f" ({', '.join(details)})" if details else ""
+            diffs.append(f"➕ <b>Пара №{pair_num}{sub_str}</b>: <b>{subj}</b>{info} — <b>ДОБАВЛЕНА</b>")
+
+        else:
+            old_l = old_map[key]
+            new_l = new_map[key]
+
+            old_subj = (old_l.get("subject") or "").strip()
+            new_subj = (new_l.get("subject") or "").strip()
+            old_room = (old_l.get("room") or "").strip()
+            new_room = (new_l.get("room") or "").strip()
+            old_tch = (old_l.get("teacher") or "").strip()
+            new_tch = (new_l.get("teacher") or "").strip()
+            old_time = (old_l.get("time") or "").strip()
+            new_time = (new_l.get("time") or "").strip()
+
+            if old_subj != new_subj:
+                old_info = f"каб. {old_room}" if old_room and old_room != "—" else ""
+                new_info = f"каб. {new_room}" if new_room and new_room != "—" else ""
+                diffs.append(
+                    f"🔄 <b>Пара №{pair_num}{sub_str}</b>: <b>Замена предмета!</b>\n"
+                    f"   Было: <s>{old_subj}</s> ({old_info})\n"
+                    f"   Стало: <b>{new_subj}</b> ({new_info})"
+                )
+            else:
+                pair_changes: list[str] = []
+                if old_room != new_room and new_room:
+                    pair_changes.append(f"🚪 каб. <s>{old_room or '—'}</s> → <b>{new_room}</b>")
+                if old_tch != new_tch and new_tch:
+                    pair_changes.append(f"👤 преп. <s>{old_tch or '—'}</s> → <b>{new_tch}</b>")
+                if old_time != new_time and new_time:
+                    pair_changes.append(f"⏰ время <s>{old_time}</s> → <b>{new_time}</b>")
+
+                if pair_changes:
+                    diffs.append(
+                        f"📝 <b>Пара №{pair_num}{sub_str} ({new_subj})</b>: " + "; ".join(pair_changes)
+                    )
+
+    return diffs
+
+
+def get_current_pair_status_info(
+    sched: dict[str, Any], current_dt: datetime, group_name: str, lang: str = "ru"
+) -> str:
+    """
+    Рассчитывает в реальном времени текущее состояние учебного процесса:
+    - До начала первой пары (обратный отсчет)
+    - Во время пары (сколько минут осталось до звонка, следующая пара)
+    - На перемене (сколько минут осталось отдыхать, куда идти)
+    - После окончания всех пар
+    - Выходной день
+    """
+    lessons = sched.get("lessons", [])
+    if not lessons:
+        if lang == "en":
+            return f"🎉 <b>No classes scheduled for today!</b>\nEnjoy your rest, group <code>{group_name}</code>!"
+        return f"🎉 <b>Сегодня занятий нет!</b>\nОтдыхайте и набирайтесь сил, группа <code>{group_name}</code>!"
+
+    def _parse_time_str(t_str: str) -> Optional[time]:
+        try:
+            parts = t_str.strip().split(":")
+            return time(int(parts[0]), int(parts[1]))
+        except Exception:
+            return None
+
+    pairs_dict: dict[int, list[dict[str, Any]]] = {}
+    for l in lessons:
+        p_num = int(l.get("pair_number") or 1)
+        pairs_dict.setdefault(p_num, []).append(l)
+
+    sorted_pair_nums = sorted(pairs_dict.keys())
+    pair_blocks: list[dict[str, Any]] = []
+
+    for p_num in sorted_pair_nums:
+        group_lessons = pairs_dict[p_num]
+        first_l = group_lessons[0]
+        start_t = _parse_time_str(first_l.get("start_time", ""))
+        end_t = _parse_time_str(first_l.get("end_time", ""))
+
+        if not start_t or not end_t:
+            raw_time = first_l.get("time", "")
+            if "-" in raw_time:
+                t_parts = raw_time.split("-")
+                start_t = _parse_time_str(t_parts[0])
+                end_t = _parse_time_str(t_parts[1])
+
+        if not start_t or not end_t:
+            continue
+
+        start_dt = datetime.combine(current_dt.date(), start_t, tzinfo=current_dt.tzinfo)
+        end_dt = datetime.combine(current_dt.date(), end_t, tzinfo=current_dt.tzinfo)
+
+        pair_blocks.append({
+            "pair_number": p_num,
+            "start_dt": start_dt,
+            "end_dt": end_dt,
+            "start_str": start_t.strftime("%H:%M"),
+            "end_str": end_t.strftime("%H:%M"),
+            "lessons": group_lessons,
+        })
+
+    if not pair_blocks:
+        return format_day_schedule_message(sched, group_name)
+
+    def _format_pair_details(block: dict[str, Any]) -> str:
+        lines = []
+        for l in block["lessons"]:
+            subj = l.get("subject", "Занятие")
+            room = l.get("room", "Не указан")
+            loc = l.get("location", "")
+            tch = l.get("teacher", "")
+            sub = l.get("subgroup", 0)
+            is_ext = l.get("is_external", False)
+
+            room_disp = f"каб. {room}" if room and room != "—" else "кабинет не указан"
+            if is_ext and "Вознесенск" not in loc:
+                loc_disp = " (Вознесенский пр., 44)"
+            elif loc:
+                loc_disp = f" ({loc})"
+            else:
+                loc_disp = ""
+
+            sub_disp = f" [подгр. {sub}]" if sub else ""
+            tch_disp = f"\n   👤 <i>{tch}</i>" if tch and tch != "—" else ""
+
+            lines.append(f"• <b>{subj}</b>{sub_disp}\n   🚪 <b>{room_disp}</b>{loc_disp}{tch_disp}")
+        return "\n".join(lines)
+
+    first_block = pair_blocks[0]
+    last_block = pair_blocks[-1]
+
+    # 1. До начала всех пар
+    if current_dt < first_block["start_dt"]:
+        mins_until = max(1, int((first_block["start_dt"] - current_dt).total_seconds() // 60))
+        h = mins_until // 60
+        m = mins_until % 60
+        time_until_str = f"{h} ч. {m} мин." if h > 0 else f"{m} мин."
+
+        return (
+            f"🌅 <b>Пары еще не начались!</b>\n"
+            f"👥 Группа: <code>{group_name}</code>\n"
+            f"⏳ До начала 1-й пары осталось: <b>{time_until_str}</b> (начало в {first_block['start_str']})\n\n"
+            f"🔜 <b>Первая пара (№{first_block['pair_number']}, {first_block['start_str']}-{first_block['end_str']}):</b>\n"
+            f"{_format_pair_details(first_block)}"
+        )
+
+    # 2. После окончания всех пар
+    if current_dt > last_block["end_dt"]:
+        return (
+            f"🎉 <b>Все пары на сегодня завершились!</b>\n"
+            f"👥 Группа: <code>{group_name}</code>\n\n"
+            f"👏 Учебный день окончен, хорошего отдыха!\n"
+            f"💡 <i>Нажмите «📆 На завтра», чтобы посмотреть следующее расписание.</i>"
+        )
+
+    # 3. Проверяем, идет ли сейчас пара или перемена
+    for idx, block in enumerate(pair_blocks):
+        if block["start_dt"] <= current_dt <= block["end_dt"]:
+            mins_left = max(1, int((block["end_dt"] - current_dt).total_seconds() // 60))
+            next_info = ""
+            if idx + 1 < len(pair_blocks):
+                next_b = pair_blocks[idx + 1]
+                next_info = (
+                    f"\n🔜 <b>Следующая пара (№{next_b['pair_number']}, {next_b['start_str']}-{next_b['end_str']}):</b>\n"
+                    f"{_format_pair_details(next_b)}"
+                )
+            else:
+                next_info = "\n🏁 <b>Это последняя пара на сегодня!</b>"
+
+            return (
+                f"🔴 <b>Сейчас идет пара №{block['pair_number']} ({block['start_str']}-{block['end_str']})</b>\n"
+                f"👥 Группа: <code>{group_name}</code>\n"
+                f"⏳ До конца пары: <b>{mins_left} мин.</b> (звонок в {block['end_str']})\n\n"
+                f"{_format_pair_details(block)}\n"
+                f"{next_info}"
+            )
+
+        if idx + 1 < len(pair_blocks):
+            next_b = pair_blocks[idx + 1]
+            if block["end_dt"] < current_dt < next_b["start_dt"]:
+                mins_left = max(1, int((next_b["start_dt"] - current_dt).total_seconds() // 60))
+                break_duration = max(1, int((next_b["start_dt"] - block["end_dt"]).total_seconds() // 60))
+
+                return (
+                    f"☕ <b>Сейчас перемена!</b> (длительность {break_duration} мин.)\n"
+                    f"👥 Группа: <code>{group_name}</code>\n"
+                    f"⏳ До звонка на пару осталось: <b>{mins_left} мин.</b> (начало в {next_b['start_str']})\n\n"
+                    f"🔜 <b>Куда идти (пара №{next_b['pair_number']}, {next_b['start_str']}-{next_b['end_str']}):</b>\n"
+                    f"{_format_pair_details(next_b)}"
+                )
+
+    return format_day_schedule_message(sched, group_name)
+
+
+def generate_ics_calendar(
+    week_sched: list[dict[str, Any]], group_name: str
+) -> str:
+    """
+    Генерирует RFC 5545 iCalendar файл (.ics) для расписания группы на неделю.
+    Совместим с Apple Calendar (iOS), Google Calendar (Android/Web), Yandex и Outlook.
+    """
+    def _esc(val: str) -> str:
+        if not val:
+            return ""
+        return (
+            str(val).replace("\\", "\\\\")
+            .replace(";", "\\;")
+            .replace(",", "\\,")
+            .replace("\n", "\\n")
+        )
+
+    now_utc_str = datetime.now(ZoneInfo("UTC")).strftime("%Y%m%dT%H%M%SZ")
+
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KTMU Schedule Bot//RU",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        f"X-WR-CALNAME:{_esc(f'Расписание {group_name}')}",
+        "X-WR-TIMEZONE:Europe/Moscow",
+    ]
+
+    for day in week_sched:
+        date_str = day.get("date", "")
+        if not date_str:
+            continue
+        try:
+            d_val = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except Exception:
+            continue
+
+        for lesson in day.get("lessons", []):
+            subj = lesson.get("subject", "Занятие")
+            room = lesson.get("room", "")
+            tch = lesson.get("teacher", "")
+            fmt = lesson.get("format", "Очно")
+            pair_num = lesson.get("pair_number", 1)
+            sub = lesson.get("subgroup", 0)
+            is_ext = lesson.get("is_external", False)
+            loc = lesson.get("location", "")
+
+            start_t_str = lesson.get("start_time", "")
+            end_t_str = lesson.get("end_time", "")
+            if not start_t_str or not end_t_str:
+                raw_t = lesson.get("time", "")
+                if "-" in raw_t:
+                    parts = raw_t.split("-")
+                    start_t_str = parts[0].strip()
+                    end_t_str = parts[1].strip()
+
+            try:
+                s_parts = start_t_str.split(":")
+                e_parts = end_t_str.split(":")
+                s_time = time(int(s_parts[0]), int(s_parts[1]))
+                e_time = time(int(e_parts[0]), int(e_parts[1]))
+            except Exception:
+                continue
+
+            dtstart = f"{d_val.strftime('%Y%m%d')}T{s_time.strftime('%H%M%S')}"
+            dtend = f"{d_val.strftime('%Y%m%d')}T{e_time.strftime('%H%M%S')}"
+
+            sub_txt = f" (подгр. {sub})" if sub else ""
+            summary = f"{subj}{sub_txt}"
+            if room and room != "—":
+                summary += f" [{room}]"
+
+            address = "Вознесенский пр., 44" if (is_ext or "Вознесенск" in loc) else (loc or "наб. реки Мойки, 61")
+            location = f"каб. {room}, {address}" if room and room != "—" else address
+
+            desc_parts = [
+                f"Пара №{pair_num} ({start_t_str}-{end_t_str})",
+                f"Группа: {group_name}",
+            ]
+            if tch and tch != "—":
+                desc_parts.append(f"Преподаватель: {tch}")
+            if fmt:
+                desc_parts.append(f"Формат: {fmt}")
+
+            description = "\n".join(desc_parts)
+            clean_grp = group_name.replace(" ", "_")
+            uid = f"{date_str}-p{pair_num}-s{sub}-{clean_grp}@ktmu-schedule"
+
+            lines.extend([
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{now_utc_str}",
+                f"DTSTART;TZID=Europe/Moscow:{dtstart}",
+                f"DTEND;TZID=Europe/Moscow:{dtend}",
+                f"SUMMARY:{_esc(summary)}",
+                f"LOCATION:{_esc(location)}",
+                f"DESCRIPTION:{_esc(description)}",
+                "STATUS:CONFIRMED",
+                "END:VEVENT",
+            ])
+
+    lines.append("END:VCALENDAR")
+    return "\r\n".join(lines) + "\r\n"
+
+
 # Глобальный экземпляр парсера расписания
 timetable_parser = TimetableParser()
+

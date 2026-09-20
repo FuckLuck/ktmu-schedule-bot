@@ -16,6 +16,7 @@ from apscheduler.triggers.date import DateTrigger
 from config import config
 from database import Database, db as default_db
 from timetable_parser import (
+    compute_schedule_diff,
     compute_schedule_hash,
     format_day_schedule_message,
     format_pair_notification,
@@ -404,6 +405,7 @@ class NotificationScheduler:
                     # 1. Считываем сохраненный кэш и хэш
                     cached_entry = await self.db.get_cached_timetable_entry(group_id, date_str)
                     old_hash = cached_entry.get("hash") if cached_entry else None
+                    old_sched = cached_entry.get("data") if cached_entry else None
 
                     # 2. Получаем свежее расписание напрямую с сайта/API
                     fresh_sched = await timetable_parser.fetch_day_schedule(
@@ -416,15 +418,30 @@ class NotificationScheduler:
 
                     # 3. Если старый хэш существовал и отличается от нового -> изменение / замена!
                     if old_hash and old_hash != new_hash:
+                        diff_items = compute_schedule_diff(old_sched, fresh_sched)
                         logger.warning(
-                            "ОБНАРУЖЕНО ИЗМЕНЕНИЕ В РАСПИСАНИИ для группы %s на %s! (старый: %s, новый: %s)",
-                            group_name, date_str, old_hash[:8], new_hash[:8]
+                            "ОБНАРУЖЕНО ИЗМЕНЕНИЕ В РАСПИСАНИИ для группы %s на %s! (старый: %s, новый: %s, замен: %d)",
+                            group_name, date_str, old_hash[:8], new_hash[:8], len(diff_items)
                         )
-                        header = (
-                            "⚠️ <b>Внимание! Изменение в расписании!</b>\n"
-                            f"Обнаружена замена или корректировка занятий для группы <code>{group_name}</code>:\n\n"
-                        )
-                        alert_text = header + format_day_schedule_message(fresh_sched, group_name)
+
+                        formatted_date = target_date.strftime("%d.%m.%Y")
+                        day_name = fresh_sched.get("day_name") or target_date.strftime("%A")
+
+                        if diff_items:
+                            diff_block = "\n".join(diff_items)
+                            alert_text = (
+                                f"⚠️ <b>Внимание! Изменение в расписании!</b>\n"
+                                f"Обнаружена замена для группы <code>{group_name}</code> на 📅 <b>{day_name} ({formatted_date})</b>:\n\n"
+                                f"🔍 <b>Список изменений:</b>\n{diff_block}\n\n"
+                                f"📋 <b>Актуальное расписание:</b>\n"
+                                f"{format_day_schedule_message(fresh_sched, group_name)}"
+                            )
+                        else:
+                            header = (
+                                "⚠️ <b>Внимание! Изменение в расписании!</b>\n"
+                                f"Обнаружена корректировка занятий для группы <code>{group_name}</code> на {day_name} ({formatted_date}):\n\n"
+                            )
+                            alert_text = header + format_day_schedule_message(fresh_sched, group_name)
 
                         # Рассылаем во все подписанные ЛС и темы
                         for cid, mtid in subscribers:

@@ -46,6 +46,8 @@ MESSAGES: dict[str, dict[str, str]] = {
     "btn_settings": {"ru": "⚙️ Настройки", "en": "⚙️ Settings"},
     "btn_lang": {"ru": "🌐 Язык", "en": "🌐 Language"},
     "btn_add_to_group": {"ru": "➕ Добавить бота в группу", "en": "➕ Add bot to group"},
+    "btn_now": {"ru": "📍 Где сейчас пара?", "en": "📍 Where is pair now?"},
+    "btn_calendar": {"ru": "📅 В календарь (.ics)", "en": "📅 Export to Calendar (.ics)"},
 
     # Домашнее задание
     "hw_title": {

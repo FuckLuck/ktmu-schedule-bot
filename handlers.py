@@ -94,6 +94,8 @@ from timetable_parser import (
     MONTH_NAMES_GENITIVE,
     format_day_schedule_message,
     format_week_schedule_messages,
+    generate_ics_calendar,
+    get_current_pair_status_info,
     timetable_parser,
 )
 
@@ -922,6 +924,7 @@ async def send_day_schedule_with_image(
         target_date=target_date,
         show_back_to_menu=not is_group,
         show_today_past=show_today_past,
+        show_calendar=True,
     )
 
     # 1. Проверяем кэш file_id (в RAM, затем в БД)
@@ -1308,6 +1311,34 @@ async def cb_schedule_nav(
             for chunk in chunks:
                 await callback.message.answer(chunk, parse_mode="HTML")
 
+        elif action == "calendar":
+            await callback.answer("Генерирую файл календаря...")
+            try:
+                target_date = datetime.strptime(callback_data.date_str, "%Y-%m-%d").date()
+            except Exception:
+                target_date = today
+            week_data = await timetable_parser.fetch_week_schedule(
+                group_id=group_id, group_url=group_url, start_date=target_date
+            )
+            ics_content = generate_ics_calendar(week_data, group_name)
+            filename = f"schedule_{group_name.replace(' ', '_')}.ics"
+            doc = BufferedInputFile(ics_content.encode("utf-8"), filename=filename)
+            caption = (
+                f"📅 <b>Расписание группы {group_name} в формате iCalendar (.ics)</b>\n\n"
+                "💡 <i>Откройте этот файл на телефоне (iPhone / Android) или на компьютере, "
+                "чтобы добавить расписание в Apple Calendar, Google Calendar или Яндекс Календарь!</i>"
+            )
+            thread_id = getattr(callback.message, "message_thread_id", None)
+            kwargs = {
+                "chat_id": callback.message.chat.id,
+                "document": doc,
+                "caption": caption,
+                "parse_mode": "HTML",
+            }
+            if thread_id is not None:
+                kwargs["message_thread_id"] = thread_id
+            await callback.bot.send_document(**kwargs)
+
     except Exception as e:
         logger.error("Ошибка навигации по расписанию: %s", e, exc_info=True)
         await callback.answer("Не удалось обновить расписание.", show_alert=True)
@@ -1344,6 +1375,92 @@ async def handle_schedule_week(message: Message, database: Database = default_db
     except Exception as e:
         logger.error("Ошибка получения расписания на неделю: %s", e, exc_info=True)
         await wait_msg.edit_text("❌ Не удалось загрузить расписание на неделю. Пожалуйста, попробуйте позже.")
+
+
+@router.message(F.text.in_({"📍 Где сейчас пара?", "📍 Where is pair now?", "📍 Сейчас", "📍 Now"}))
+@router.message(Command("now"))
+async def handle_pair_now(message: Message, database: Database = default_db):
+    """
+    Live-виджет текущей пары:
+    - Показывает, идет ли пара сейчас, сколько минут осталось до звонка и какая следующая пара
+    - Во время перемены подсказывает, сколько минут отдыхать и в какой кабинет бежать
+    - До начала занятий — обратный отсчет до 1-й пары
+    - После окончания — поздравление с завершением дня
+    """
+    user = await _get_authorized_user(message, database)
+    if not user:
+        return
+
+    now_dt = get_current_college_time()
+    today = now_dt.date()
+    group_id = user["group_id"]
+    group_name = user["group_name"]
+    group_url = user["group_url"]
+    lang = user.get("language", "ru")
+    thread_id = getattr(message, "message_thread_id", None)
+
+    await send_chat_action_safe(message.bot, message.chat.id, ChatAction.TYPING, thread_id)
+    wait_msg = await message.answer("🔍 <i>Определяю текущую пару...</i>", parse_mode="HTML")
+
+    try:
+        today_sched = await timetable_parser.fetch_day_schedule(
+            group_id=group_id, group_url=group_url, target_date=today
+        )
+        status_text = get_current_pair_status_info(
+            sched=today_sched, current_dt=now_dt, group_name=group_name, lang=lang
+        )
+        await wait_msg.edit_text(status_text, parse_mode="HTML")
+    except Exception as e:
+        logger.error("Ошибка определения текущей пары: %s", e, exc_info=True)
+        await wait_msg.edit_text("❌ Не удалось получить статус текущей пары. Пожалуйста, попробуйте позже.")
+
+
+@router.message(F.text.in_({"📅 В календарь", "📅 В календарь (.ics)", "📅 Export to Calendar"}))
+@router.message(Command("export_calendar"))
+@router.message(Command("calendar"))
+async def handle_export_calendar(message: Message, database: Database = default_db):
+    """
+    Генерирует и отправляет RFC 5545 iCalendar (.ics) файл на текущую неделю.
+    """
+    user = await _get_authorized_user(message, database)
+    if not user:
+        return
+
+    today = get_current_college_time().date()
+    group_id = user["group_id"]
+    group_name = user["group_name"]
+    group_url = user["group_url"]
+    thread_id = getattr(message, "message_thread_id", None)
+
+    await send_chat_action_safe(message.bot, message.chat.id, ChatAction.TYPING, thread_id)
+    wait_msg = await message.answer("⏳ <i>Формирую файл календаря (.ics)...</i>", parse_mode="HTML")
+
+    try:
+        week_data = await timetable_parser.fetch_week_schedule(
+            group_id=group_id, group_url=group_url, start_date=today
+        )
+        ics_content = generate_ics_calendar(week_data, group_name)
+        filename = f"schedule_{group_name.replace(' ', '_')}.ics"
+        doc = BufferedInputFile(ics_content.encode("utf-8"), filename=filename)
+        caption = (
+            f"📅 <b>Расписание группы {group_name} в формате iCalendar (.ics)</b>\n\n"
+            "💡 <i>Откройте этот файл на телефоне (iPhone / Android) или на компьютере, "
+            "чтобы добавить расписание в Apple Calendar, Google Calendar или Яндекс Календарь!</i>"
+        )
+        await wait_msg.delete()
+        kwargs = {
+            "chat_id": message.chat.id,
+            "document": doc,
+            "caption": caption,
+            "parse_mode": "HTML",
+        }
+        if thread_id is not None:
+            kwargs["message_thread_id"] = thread_id
+        await message.bot.send_document(**kwargs)
+    except Exception as e:
+        logger.error("Ошибка экспорта календаря: %s", e, exc_info=True)
+        await wait_msg.edit_text("❌ Не удалось экспортировать календарь. Пожалуйста, попробуйте позже.")
+
 
 
 # -------------------------------------------------------------------------
