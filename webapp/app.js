@@ -854,54 +854,10 @@
         details.appendChild(sgEl);
       }
 
-      // bottom + skip button
-      const bottom = document.createElement('div');
-      bottom.className = 'lesson-bottom';
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = `skip-toggle-btn${skipped ? ' is-skipped' : ''}`;
-      btn.textContent = skipped ? '↩️ Я иду на пару' : '💤 Не иду на пару';
-
-      // Обработчик кнопки — прямой, без делегирования
-      btn.addEventListener('click', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        triggerHaptic('impact');
-
-        const nowSkipped = !state.skippedPairs.has(skipKey);
-        if (nowSkipped) {
-          state.skippedPairs.add(skipKey);
-        } else {
-          state.skippedPairs.delete(skipKey);
-        }
-        saveLocalSkips();
-
-        // Подсчет за месяц
-        const currentMonth = dateStr.slice(0, 7);
-        let monthlyTotal = 0;
-        state.skippedPairs.forEach(k => { if (k.startsWith(currentMonth)) monthlyTotal++; });
-        state.monthlySkippedTotal = monthlyTotal;
-
-        // Перерисовываем карточку
-        card.innerHTML = '';
-        refreshCard();
-
-        updateLiveWidget();
-
-        if (nowSkipped) {
-          showToast(`💤 Пара №${pairNum} пропущена (в месяце: ${monthlyTotal})`);
-        } else {
-          showToast(`✅ Пара №${pairNum} возвращена (в месяце: ${monthlyTotal})`);
-        }
-      });
-
-      bottom.appendChild(btn);
-
       card.innerHTML = '';
       card.appendChild(top);
       card.appendChild(subj);
       card.appendChild(details);
-      card.appendChild(bottom);
     }
 
     refreshCard();
