@@ -20,10 +20,10 @@
   // --- Состояние приложения ---
   const state = {
     userId: null,
-    groupName: '1-КПД-2',
+    groupName: '1-КСД-1',
     weekNumber: 4,
     isEvenWeek: false,
-    selectedSubgroup: 0, // 0 = Все
+    subgroup: 0, // 0 = Все, 1 = 1-я подгруппа, 2 = 2-я подгруппа
     selectedDayIndex: 0, // 0 = Пн, 1 = Вт, ...
     searchQuery: '',
     weekDays: [],
@@ -112,6 +112,12 @@
     state.weekNumber = data.week_number || 4;
     state.isEvenWeek = !!data.is_even;
     state.weekDays = data.days || [];
+    if (data.subgroup !== undefined && data.subgroup !== null) {
+      state.subgroup = parseInt(data.subgroup, 10) || 0;
+      try {
+        localStorage.setItem('ktmu_user_subgroup', state.subgroup);
+      } catch (e) {}
+    }
     try {
       localStorage.setItem('ktmu_selected_group', state.groupName);
       localStorage.setItem('ktmu_schedule_cache', JSON.stringify(data));
@@ -142,7 +148,7 @@
         state.userId = parseInt(uid, 10);
       }
     }
-    // 3. Локальный кэш
+    // 3. Локальный кэш пользователя
     if (!state.userId) {
       const saved = localStorage.getItem('ktmu_user_id');
       if (saved) state.userId = parseInt(saved, 10);
@@ -152,7 +158,13 @@
       } catch (e) {}
     }
 
-    // Загрузка локальных пропусков
+    // 4. Загрузка подгруппы
+    const savedSub = localStorage.getItem('ktmu_user_subgroup');
+    if (savedSub !== null && !isNaN(parseInt(savedSub, 10))) {
+      state.subgroup = parseInt(savedSub, 10);
+    }
+
+    // 5. Загрузка локальных пропусков
     const local = localStorage.getItem('ktmu_skipped_pairs');
     if (local) {
       try {
@@ -162,6 +174,14 @@
         }
       } catch (e) {}
     }
+
+    // 6. Подсчет пропусков за текущий месяц
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    let mCount = 0;
+    state.skippedPairs.forEach(k => {
+      if (k.startsWith(currentMonth)) mCount++;
+    });
+    state.monthlySkippedTotal = mCount;
 
     syncSkipsFromServer();
   }
@@ -598,6 +618,42 @@
     document.getElementById('week-badge').textContent = `Неделя ${state.weekNumber} • ${parityText}`;
   }
 
+  // --- Отрисовка подгруппы и плашки ---
+  function renderSubgroupUI() {
+    const wrapper = document.getElementById('subgroup-notice-wrapper');
+    const badge = document.getElementById('subgroup-badge');
+
+    if (badge) {
+      if (state.subgroup === 1) {
+        badge.textContent = '👥 1 подгруппа ▾';
+      } else if (state.subgroup === 2) {
+        badge.textContent = '👥 2 подгруппа ▾';
+      } else {
+        badge.textContent = '👥 Все пары ▾';
+      }
+    }
+
+    // Плашка скрывается, если подгруппа уже выбрана (1 или 2, или явно сохранена)
+    const hasChosen = localStorage.getItem('ktmu_user_subgroup') !== null;
+    if (wrapper) {
+      wrapper.style.display = hasChosen ? 'none' : 'block';
+    }
+  }
+
+  function setSubgroup(num) {
+    triggerHaptic('success');
+    state.subgroup = num;
+    try {
+      localStorage.setItem('ktmu_user_subgroup', num);
+    } catch (e) {}
+    renderSubgroupUI();
+    renderDaysNav();
+    renderSchedule();
+    updateLiveWidget();
+    const label = num === 1 ? '1-я подгруппа' : (num === 2 ? '2-я подгруппа' : 'Все пары');
+    showToast(`Выбрано: ${label} ✅`);
+  }
+
   // --- Отрисовка ленты дней (Пн-Сб) ---
   function renderDaysNav() {
     const nav = document.getElementById('days-nav');
@@ -621,7 +677,7 @@
         }
       }
 
-      // Подсчет количества пар
+      // Подсчет количества пар с учетом подгруппы
       const count = getFilteredLessons(dayData.lessons).length;
 
       pill.innerHTML = `
@@ -652,6 +708,10 @@
   function getFilteredLessons(lessons) {
     if (!lessons) return [];
     return lessons.filter(l => {
+      // Фильтр по подгруппе
+      if (state.subgroup === 1 && l.subgroup === 2) return false;
+      if (state.subgroup === 2 && l.subgroup === 1) return false;
+
       // Фильтр по поисковому запросу
       if (state.searchQuery) {
         const q = state.searchQuery.toLowerCase();
@@ -756,45 +816,115 @@
         state.skippedPairs.delete(skipKey);
       }
       saveLocalSkips();
+
+      // Мгновенный подсчет за текущий месяц
+      const currentMonth = dateStr.slice(0, 7);
+      let monthlyTotal = 0;
+      state.skippedPairs.forEach(k => {
+        if (k.startsWith(currentMonth)) monthlyTotal++;
+      });
+      state.monthlySkippedTotal = monthlyTotal;
+
       renderSchedule();
       updateLiveWidget();
 
-      // Синхронизация с ботом через серверный API
+      // Немедленный тост с подсчетом пропусков за месяц
+      if (nowSkipped) {
+        showToast(`💤 Пара №${pairNum} пропущена! (в этом месяце: ${monthlyTotal})`);
+      } else {
+        showToast(`✅ Пара №${pairNum} возвращена! (в этом месяце: ${monthlyTotal})`);
+      }
+
+      // Фоновая синхронизация с сервером
       if (state.userId) {
         try {
-          const resp = await fetch('/api/skip', {
+          fetch('/api/skip', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               user_id: state.userId,
               date: dateStr,
-              pair_number: pairNum
+              pair_number: pairNum,
+              is_skipped: nowSkipped
             })
-          });
-          if (resp.ok) {
-            const data = await resp.json();
-            state.monthlySkippedTotal = data.monthly_total || 0;
-            if (data.is_skipped) {
-              showToast(`💤 Пара №${pairNum} пропущена (в этом месяце: ${data.monthly_total})`);
-            } else {
-              showToast(`✅ Пара №${pairNum} возвращена (в этом месяце: ${data.monthly_total})`);
-            }
-            return;
-          }
-        } catch (e) {
-          console.warn('Ошибка отправки статуса пропуска на сервер:', e);
-        }
-      }
-
-      // Локальный тост, если нет связи с бэкендом
-      if (nowSkipped) {
-        showToast(`Пара №${pairNum} отмечена как пропущенная 💤`);
-      } else {
-        showToast(`Пара №${pairNum} отмечена как посещаемая ✅`);
+          }).catch(() => {});
+        } catch (e) {}
       }
     });
 
     return card;
+  }
+
+  // --- Поддержка плавных жестов свайпа (Swipe between days) ---
+  function setupSwipeGestures() {
+    const container = document.getElementById('lessons-timeline') || document.body;
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchStartTime = 0;
+
+    container.addEventListener('touchstart', (e) => {
+      const touch = e.touches[0];
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+      touchStartTime = Date.now();
+    }, { passive: true });
+
+    container.addEventListener('touchend', (e) => {
+      const touch = e.changedTouches[0];
+      const deltaX = touch.clientX - touchStartX;
+      const deltaY = touch.clientY - touchStartY;
+      const duration = Date.now() - touchStartTime;
+
+      // Свайп влево или вправо (дистанция от 40px, горизонтальное смещение больше вертикального)
+      if (Math.abs(deltaX) >= 40 && Math.abs(deltaX) > Math.abs(deltaY) && duration < 500) {
+        if (deltaX < 0) {
+          // Свайп влево: следующий день
+          if (state.selectedDayIndex < state.weekDays.length - 1) {
+            triggerHaptic('selection');
+            state.selectedDayIndex++;
+            animateDaySwitch('next');
+          }
+        } else {
+          // Свайп вправо: предыдущий день
+          if (state.selectedDayIndex > 0) {
+            triggerHaptic('selection');
+            state.selectedDayIndex--;
+            animateDaySwitch('prev');
+          }
+        }
+      }
+    }, { passive: true });
+
+    // Поддержка перелистывания стрелками на клавиатуре
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft' && state.selectedDayIndex > 0) {
+        state.selectedDayIndex--;
+        animateDaySwitch('prev');
+      } else if (e.key === 'ArrowRight' && state.selectedDayIndex < state.weekDays.length - 1) {
+        state.selectedDayIndex++;
+        animateDaySwitch('next');
+      }
+    });
+  }
+
+  function animateDaySwitch(direction) {
+    const timeline = document.getElementById('lessons-timeline');
+    if (timeline) {
+      timeline.style.opacity = '0.3';
+      timeline.style.transform = direction === 'next' ? 'translateX(15px)' : 'translateX(-15px)';
+      timeline.style.transition = 'all 0.15s ease-out';
+      setTimeout(() => {
+        renderDaysNav();
+        renderSchedule();
+        updateLiveWidget();
+        timeline.style.opacity = '1';
+        timeline.style.transform = 'translateX(0)';
+      }, 100);
+    } else {
+      renderDaysNav();
+      renderSchedule();
+      updateLiveWidget();
+    }
   }
 
   // --- Live-виджет текущей пары и отсчета времени ---
@@ -977,18 +1107,41 @@
         if (e.target === modalOverlay) closeGroupModal();
       });
     }
+
+    // Кнопки выбора подгруппы в желтой плашке
+    document.querySelectorAll('.subgroup-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const sub = parseInt(btn.dataset.sub, 10) || 0;
+        setSubgroup(sub);
+      });
+    });
+
+    // Клик по бейджу подгруппы в шапке
+    const subBadge = document.getElementById('subgroup-badge');
+    if (subBadge) {
+      subBadge.addEventListener('click', () => {
+        triggerHaptic('light');
+        const wrapper = document.getElementById('subgroup-notice-wrapper');
+        if (wrapper) {
+          wrapper.style.display = wrapper.style.display === 'none' ? 'block' : 'none';
+        }
+      });
+    }
   }
 
   // --- Инициализация приложения ---
   function init() {
-    loadScheduleData();
     initUserSession();
+    loadScheduleData();
     state.selectedDayIndex = determineDefaultDayIndex();
     renderHeader();
+    renderSubgroupUI();
     renderDaysNav();
     renderSchedule();
     updateLiveWidget();
     setupEventListeners();
+    setupSwipeGestures();
 
     // Запуск таймера Live-виджета
     state.timerInterval = setInterval(updateLiveWidget, 30000);

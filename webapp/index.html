@@ -27,7 +27,10 @@
               <h1 id="group-title" class="group-title">Загрузка...</h1>
               <span class="group-chevron">▼</span>
             </div>
-            <span id="week-badge" class="week-badge">Учебная неделя</span>
+            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px;">
+              <span id="week-badge" class="week-badge">Учебная неделя</span>
+              <span id="subgroup-badge" class="subgroup-header-badge" id="subgroup-badge-trigger" title="Нажмите, чтобы сменить подгруппу">👥 Подгруппа</span>
+            </div>
           </div>
         </div>
         <button id="theme-toggle" class="icon-button" aria-label="Сменить тему" title="Сменить тему">
@@ -44,12 +47,17 @@
     </nav>
 
     <!-- Желтая информационная табличка о выборе подгруппы по предметам -->
-    <div class="subgroup-notice-wrapper">
+    <div class="subgroup-notice-wrapper" id="subgroup-notice-wrapper">
       <div class="subgroup-notice-card" id="subgroup-notice">
         <span class="notice-icon">💡</span>
         <div class="notice-content">
-          <span class="notice-title">Выберите подгруппу по некоторым предметам</span>
-          <span class="notice-text">Информатика, иностранный язык и лабораторные работы делятся на 1-ю и 2-ю подгруппы. Ориентируйтесь на свою подгруппу.</span>
+          <span class="notice-title">Выберите вашу подгруппу</span>
+          <span class="notice-text">Информатика, иностранный язык и лабораторные делятся на подгруппы:</span>
+          <div class="subgroup-buttons">
+            <button class="subgroup-btn" data-sub="1">👥 1-я подгруппа</button>
+            <button class="subgroup-btn" data-sub="2">👥 2-я подгруппа</button>
+            <button class="subgroup-btn" data-sub="0">Все пары</button>
+          </div>
         </div>
       </div>
     </div>
