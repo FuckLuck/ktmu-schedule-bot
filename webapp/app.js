@@ -24,6 +24,7 @@
     weekNumber: 4,
     isEvenWeek: false,
     subgroup: 0, // 0 = Все, 1 = 1-я подгруппа, 2 = 2-я подгруппа
+    subgroupChosen: false, // труе если пользователь явно выбрал подгруппу
     selectedDayIndex: 0, // 0 = Пн, 1 = Вт, ...
     searchQuery: '',
     weekDays: [],
@@ -115,7 +116,14 @@
     if (data.subgroup !== undefined && data.subgroup !== null) {
       state.subgroup = parseInt(data.subgroup, 10) || 0;
       try {
-        localStorage.setItem('ktmu_user_subgroup', state.subgroup);
+        localStorage.setItem('ktmu_user_subgroup', String(state.subgroup));
+      } catch (e) {}
+    }
+    // Бот говорит: пользователь уже явно выбрал подгруппу
+    if (data.subgroup_chosen) {
+      state.subgroupChosen = true;
+      try {
+        localStorage.setItem('ktmu_subgroup_chosen', '1');
       } catch (e) {}
     }
     try {
@@ -164,7 +172,19 @@
       state.subgroup = parseInt(savedSub, 10);
     }
 
-    // 5. Загрузка локальных пропусков
+    // 5. Проверяем флаг "subgroup_chosen" (бот передал через URL или localStorage)
+    const chosenFromStorage = localStorage.getItem('ktmu_subgroup_chosen');
+    if (chosenFromStorage === '1') {
+      state.subgroupChosen = true;
+    }
+    // URL параметр subgroup_chosen=1
+    const params2 = new URLSearchParams(window.location.search);
+    if (params2.get('subgroup_chosen') === '1') {
+      state.subgroupChosen = true;
+      try { localStorage.setItem('ktmu_subgroup_chosen', '1'); } catch (e) {}
+    }
+
+    // 6. Загрузка локальных пропусков
     const local = localStorage.getItem('ktmu_skipped_pairs');
     if (local) {
       try {
@@ -175,7 +195,7 @@
       } catch (e) {}
     }
 
-    // 6. Подсчет пропусков за текущий месяц
+    // 7. Подсчет пропусков за текущий месяц
     const currentMonth = new Date().toISOString().slice(0, 7);
     let mCount = 0;
     state.skippedPairs.forEach(k => {
@@ -186,29 +206,16 @@
     syncSkipsFromServer();
   }
 
-  async function syncSkipsFromServer() {
-    if (!state.userId) return;
-    try {
-      const res = await fetch(`/api/skips?user_id=${state.userId}`);
-      if (res.ok) {
-        const data = await res.json();
-        state.monthlySkippedTotal = data.total_skipped_pairs || 0;
-        if (Array.isArray(data.days_detail)) {
-          data.days_detail.forEach(d => {
-            if (d.date && Array.isArray(d.pair_numbers)) {
-              d.pair_numbers.forEach(p => {
-                state.skippedPairs.add(`${d.date}:${p}`);
-              });
-            }
-          });
-          saveLocalSkips();
-          renderSchedule();
-          updateLiveWidget();
-        }
-      }
-    } catch (e) {
-      console.warn('Офлайн или сервер недоступен для синхронизации:', e);
-    }
+  function syncSkipsFromServer() {
+    // Пропуски загружаются из URL-данных бота (data=...) при открытии мини-апп.
+    // Дополнительный fetch не нужен — Vercel не имеет доступа к боту.
+    // Данные уже применены в applyParsedData() при loadScheduleData().
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    let mCount = 0;
+    state.skippedPairs.forEach(k => {
+      if (k.startsWith(currentMonth)) mCount++;
+    });
+    state.monthlySkippedTotal = mCount;
   }
 
   function saveLocalSkips() {
@@ -633,8 +640,10 @@
       }
     }
 
-    // Плашка скрывается, если подгруппа уже выбрана (1 или 2, или явно сохранена)
-    const hasChosen = localStorage.getItem('ktmu_user_subgroup') !== null;
+    // Плашка скрывается если:
+    // 1) state.subgroupChosen = true (пользователь явно выбрал через мини-апп или бот передал subgroup_chosen=true)
+    // 2) ktmu_subgroup_chosen === '1' в localStorage
+    const hasChosen = state.subgroupChosen || localStorage.getItem('ktmu_subgroup_chosen') === '1';
     if (wrapper) {
       wrapper.style.display = hasChosen ? 'none' : 'block';
     }
@@ -643,8 +652,10 @@
   function setSubgroup(num) {
     triggerHaptic('success');
     state.subgroup = num;
+    state.subgroupChosen = true;
     try {
-      localStorage.setItem('ktmu_user_subgroup', num);
+      localStorage.setItem('ktmu_user_subgroup', String(num));
+      localStorage.setItem('ktmu_subgroup_chosen', '1');
     } catch (e) {}
     renderSubgroupUI();
     renderDaysNav();
@@ -652,6 +663,7 @@
     updateLiveWidget();
     const label = num === 1 ? '1-я подгруппа' : (num === 2 ? '2-я подгруппа' : 'Все пары');
     showToast(`Выбрано: ${label} ✅`);
+    // Подгруппа сохраняется локально; бот получит обновление при следующем открытии через /start
   }
 
   // --- Отрисовка ленты дней (Пн-Сб) ---
@@ -806,7 +818,8 @@
 
     // Клик по кнопке пропуска пары
     const skipBtn = card.querySelector('.skip-toggle-btn');
-    skipBtn.addEventListener('click', async () => {
+    skipBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
       triggerHaptic('impact');
       const nowSkipped = !state.skippedPairs.has(skipKey);
 
@@ -835,21 +848,8 @@
         showToast(`✅ Пара №${pairNum} возвращена! (в этом месяце: ${monthlyTotal})`);
       }
 
-      // Фоновая синхронизация с сервером
-      if (state.userId) {
-        try {
-          fetch('/api/skip', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              user_id: state.userId,
-              date: dateStr,
-              pair_number: pairNum,
-              is_skipped: nowSkipped
-            })
-          }).catch(() => {});
-        } catch (e) {}
-      }
+      // Пропуск сохраняется локально в localStorage.
+      // При следующем открытии через /start бот обновит недельные данные.
     });
 
     return card;
@@ -857,26 +857,45 @@
 
   // --- Поддержка плавных жестов свайпа (Swipe between days) ---
   function setupSwipeGestures() {
-    const container = document.getElementById('lessons-timeline') || document.body;
+    // Вешаем на app-container, чтобы не блокировать клики по кнопкам внутри карточек
+    const container = document.getElementById('app-container') || document.body;
     let touchStartX = 0;
     let touchStartY = 0;
     let touchStartTime = 0;
+    let isSwiping = false;
 
     container.addEventListener('touchstart', (e) => {
       const touch = e.touches[0];
       touchStartX = touch.clientX;
       touchStartY = touch.clientY;
       touchStartTime = Date.now();
+      isSwiping = false;
+    }, { passive: true });
+
+    container.addEventListener('touchmove', (e) => {
+      if (!isSwiping) {
+        const dx = Math.abs(e.touches[0].clientX - touchStartX);
+        const dy = Math.abs(e.touches[0].clientY - touchStartY);
+        if (dx > 10 && dx > dy * 1.5) {
+          isSwiping = true;
+        }
+      }
     }, { passive: true });
 
     container.addEventListener('touchend', (e) => {
+      if (!isSwiping) return;
       const touch = e.changedTouches[0];
       const deltaX = touch.clientX - touchStartX;
       const deltaY = touch.clientY - touchStartY;
       const duration = Date.now() - touchStartTime;
 
-      // Свайп влево или вправо (дистанция от 40px, горизонтальное смещение больше вертикального)
-      if (Math.abs(deltaX) >= 40 && Math.abs(deltaX) > Math.abs(deltaY) && duration < 500) {
+      // Свайп влево или вправо (дистанция от 50px, горизонтальное смещение больше вертикального)
+      if (Math.abs(deltaX) >= 50 && Math.abs(deltaX) > Math.abs(deltaY) * 1.5 && duration < 600) {
+        // Проверяем что свайп не начался внутри кнопки
+        const target = e.target;
+        if (target && (target.closest('button') || target.closest('.skip-toggle-btn') || target.closest('.subgroup-btn'))) {
+          return;
+        }
         if (deltaX < 0) {
           // Свайп влево: следующий день
           if (state.selectedDayIndex < state.weekDays.length - 1) {

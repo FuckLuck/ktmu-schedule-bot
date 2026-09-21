@@ -399,6 +399,7 @@ async def sync_user_menu_button(
             is_even=is_even,
             user_id=user_id,
             skipped_pairs=skipped_list if skipped_list else None,
+            subgroup_chosen=(subgroup > 0),  # True если пользователь выбрал подгруппу 1 или 2
         )
 
         await bot.set_chat_menu_button(
@@ -5191,3 +5192,97 @@ async def cb_skip_date_today(callback: CallbackQuery, database: Database = defau
     except Exception:
         await callback.message.answer(msg_text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
+
+
+# ---------------------------------------------------------------------------
+# Обработчик данных от Telegram Mini App (web_app_data)
+# Мини-апп отправляет JSON через tg.sendData() для синхронизации пропусков и подгруппы
+# ---------------------------------------------------------------------------
+
+@router.message(F.web_app_data)
+async def handle_web_app_data(message: Message, database: Database = default_db):
+    """
+    Принимает данные от Telegram Mini App (расписание КТМУ).
+    Поддерживаемые действия:
+      - {"action": "toggle_skip", "date": "YYYY-MM-DD", "pair_number": N, "is_skipped": bool}
+      - {"action": "set_subgroup", "subgroup": 0|1|2}
+    """
+    user_id = message.from_user.id
+    lang = "ru"
+    try:
+        user = await database.get_user(user_id)
+        if user:
+            lang = user.get("language", "ru")
+    except Exception:
+        pass
+
+    raw = message.web_app_data.data if message.web_app_data else ""
+    logger.info("web_app_data от %s: %s", user_id, raw[:200])
+
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        logger.warning("web_app_data: невалидный JSON от %s: %s", user_id, raw[:100])
+        return
+
+    action = payload.get("action", "")
+
+    # --- Пропуск / возврат пары ---
+    if action == "toggle_skip":
+        date_str = str(payload.get("date", "")).strip()
+        pair_number = payload.get("pair_number")
+        is_skipped_requested = payload.get("is_skipped")
+
+        if not date_str or pair_number is None:
+            logger.warning("web_app_data toggle_skip: не хватает полей от %s", user_id)
+            return
+
+        try:
+            pair_number = int(pair_number)
+        except (ValueError, TypeError):
+            logger.warning("web_app_data toggle_skip: неверный pair_number от %s", user_id)
+            return
+
+        # Получаем текущее состояние и переключаем если нужно
+        is_currently_skipped = await database.is_pair_skipped(user_id, date_str, pair_number)
+        if is_skipped_requested is not None:
+            # Явное значение: синхронизируем с запрошенным состоянием
+            if bool(is_skipped_requested) != is_currently_skipped:
+                await database.toggle_skipped_pair(user_id, date_str, pair_number)
+        else:
+            # Переключаем
+            await database.toggle_skipped_pair(user_id, date_str, pair_number)
+
+        is_now_skipped = await database.is_pair_skipped(user_id, date_str, pair_number)
+        month_str = date_str[:7]
+        stats = await database.get_monthly_skipped_stats(user_id, month_str)
+        monthly_total = stats.get("total_skipped_pairs", 0)
+
+        logger.info(
+            "web_app_data: пара %s/%s -> skipped=%s, месячный итог=%s (user=%s)",
+            date_str, pair_number, is_now_skipped, monthly_total, user_id
+        )
+
+        # Обновляем кнопку меню с актуальными данными
+        if message.bot:
+            asyncio.create_task(sync_user_menu_button(message.bot, user_id, database))
+
+    # --- Выбор подгруппы ---
+    elif action == "set_subgroup":
+        subgroup = payload.get("subgroup", 0)
+        try:
+            subgroup = int(subgroup)
+            if subgroup not in (0, 1, 2):
+                subgroup = 0
+        except (ValueError, TypeError):
+            subgroup = 0
+
+        await database.set_user_subgroup(user_id, subgroup)
+        logger.info("web_app_data: подгруппа %s -> %s (user=%s)", subgroup, subgroup, user_id)
+
+        # Обновляем кнопку меню
+        if message.bot:
+            asyncio.create_task(sync_user_menu_button(message.bot, user_id, database))
+
+    else:
+        logger.warning("web_app_data: неизвестное действие '%s' от %s", action, user_id)

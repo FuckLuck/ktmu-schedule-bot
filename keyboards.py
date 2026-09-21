@@ -1527,6 +1527,7 @@ def pack_schedule_for_webapp(
     subgroup: int = 0,
     user_id: Optional[int] = None,
     skipped_pairs: Optional[list[str]] = None,
+    subgroup_chosen: bool = False,
 ) -> str:
     """Упаковывает расписание группы в компактную base64url JSON строку для мгновенной загрузки в WebApp."""
     import base64
@@ -1557,6 +1558,7 @@ def pack_schedule_for_webapp(
         "week_number": week_number,
         "is_even": is_even,
         "subgroup": subgroup,
+        "subgroup_chosen": subgroup_chosen,  # True если пользователь явно выбрал подгруппу
         "days": minimal_days,
     }
     if user_id:
@@ -1578,6 +1580,7 @@ def build_webapp_url(
     base_url: Optional[str] = None,
     user_id: Optional[int] = None,
     skipped_pairs: Optional[list[str]] = None,
+    subgroup_chosen: bool = False,
 ) -> str:
     """Строит полный HTTPS URL для Telegram WebApp с опциональным hash payload данных."""
     from config import Settings
@@ -1588,13 +1591,16 @@ def build_webapp_url(
     if week_days:
         b64_data = pack_schedule_for_webapp(
             week_days, group_name, week_number, is_even, subgroup,
-            user_id=user_id, skipped_pairs=skipped_pairs
+            user_id=user_id, skipped_pairs=skipped_pairs,
+            subgroup_chosen=subgroup_chosen,
         )
         return f"{base_url}#data={b64_data}"
 
     query = f"?group={group_name}&subgroup={subgroup}"
     if user_id:
         query += f"&user_id={user_id}"
+    if subgroup_chosen:
+        query += "&subgroup_chosen=1"
     return f"{base_url}{query}"
 
 
