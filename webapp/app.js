@@ -72,6 +72,30 @@
     }, 2400);
   }
 
+  // --- Обновление адресной строки и генерация красивой ссылки ---
+  function updateAddressBar() {
+    try {
+      const group = state.groupName || '1-КСД-1';
+      let search = `?group=${encodeURIComponent(group)}`;
+      if (state.subgroup && state.subgroup > 0) {
+        search += `&subgroup=${state.subgroup}`;
+      }
+      if (window.history && window.history.replaceState) {
+        window.history.replaceState(null, '', window.location.pathname + search);
+      }
+    } catch (e) {}
+  }
+
+  function getCleanShareUrl() {
+    const origin = window.location.origin || 'https://ktmu-schedule-bot-plqd-one.vercel.app';
+    const group = state.groupName || '1-КСД-1';
+    let url = `${origin}/?group=${encodeURIComponent(group)}`;
+    if (state.subgroup && state.subgroup > 0) {
+      url += `&subgroup=${state.subgroup}`;
+    }
+    return url;
+  }
+
   // --- Загрузка и декодирование расписания ---
   function loadScheduleData() {
     // 1. Попытка чтения из URL hash (#data=...)
@@ -83,13 +107,51 @@
         const parsed = JSON.parse(jsonStr);
         applyParsedData(parsed);
         localStorage.setItem('ktmu_schedule_cache', jsonStr);
+
+        // Убираем гигантский hash (#data=...) из адресной строки, заменяя на красивый URL: /?group=...
+        updateAddressBar();
         return;
       } catch (e) {
         console.warn('Не удалось распарсить hash данные:', e);
       }
     }
 
-    // 2. Попытка чтения из localStorage
+    // 2. Чтение из URL параметров (?group=...&subgroup=...)
+    const urlParams = new URLSearchParams(window.location.search);
+    const queryGroup = urlParams.get('group');
+    const querySubgroup = urlParams.get('subgroup');
+    if (queryGroup) {
+      state.groupName = queryGroup;
+      try {
+        localStorage.setItem('ktmu_selected_group', queryGroup);
+      } catch (e) {}
+      if (querySubgroup !== null) {
+        const subNum = parseInt(querySubgroup, 10);
+        if (!isNaN(subNum) && subNum >= 0) {
+          state.subgroup = subNum;
+          state.subgroupChosen = true;
+          try {
+            localStorage.setItem('ktmu_user_subgroup', String(subNum));
+            localStorage.setItem('ktmu_subgroup_chosen', '1');
+          } catch (e) {}
+        }
+      }
+      // Проверяем кэш для этой группы
+      const cached = localStorage.getItem('ktmu_schedule_cache');
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed && (parsed.group_name === queryGroup || parsed.group === queryGroup)) {
+            applyParsedData(parsed);
+            return;
+          }
+        } catch (e) {}
+      }
+      applyMockData(queryGroup);
+      return;
+    }
+
+    // 3. Попытка чтения из localStorage
     const savedGroup = localStorage.getItem('ktmu_selected_group') || '1-КСД-1';
     const cached = localStorage.getItem('ktmu_schedule_cache');
     if (cached) {
@@ -104,7 +166,7 @@
       }
     }
 
-    // 3. Fallback реальное расписание выбранной группы
+    // 4. Fallback реальное расписание выбранной группы
     applyMockData(savedGroup);
   }
 
@@ -572,6 +634,7 @@
       localStorage.setItem('ktmu_selected_group', groupName);
       localStorage.removeItem('ktmu_schedule_cache');
     } catch (e) {}
+    updateAddressBar();
     renderHeader();
     renderDaysNav();
     renderSchedule();
@@ -657,6 +720,7 @@
       localStorage.setItem('ktmu_user_subgroup', String(num));
       localStorage.setItem('ktmu_subgroup_chosen', '1');
     } catch (e) {}
+    updateAddressBar();
     renderSubgroupUI();
     renderDaysNav();
     renderSchedule();
@@ -1082,15 +1146,39 @@
     // Кнопка «Поделиться»
     document.getElementById('btn-share').addEventListener('click', () => {
       triggerHaptic('light');
+
+      const group = state.groupName || '1-КСД-1';
+      const cleanUrl = getCleanShareUrl();
+      const shareTitle = `Расписание ${group}`;
+      const shareText = `Расписание занятий группы ${group} в КТМУ`;
+
+      // 1. В Telegram WebApp открываем нативный диалог пересылки в чаты Telegram
+      if (window.Telegram?.WebApp?.openTelegramLink) {
+        const tmeUrl = `https://t.me/share/url?url=${encodeURIComponent(cleanUrl)}&text=${encodeURIComponent(shareText)}`;
+        try {
+          window.Telegram.WebApp.openTelegramLink(tmeUrl);
+          return;
+        } catch (err) {
+          console.warn('Telegram openTelegramLink failed, trying fallback:', err);
+        }
+      }
+
+      // 2. Стандартный Web Share API мобильных браузеров (Safari, Chrome и др.)
       if (navigator.share) {
         navigator.share({
-          title: `Расписание ${state.groupName}`,
-          text: `Расписание занятий группы ${state.groupName} в КТМУ`,
-          url: window.location.href
+          title: shareTitle,
+          text: shareText,
+          url: cleanUrl
         }).catch(() => {});
-      } else {
-        navigator.clipboard?.writeText(window.location.href);
+        return;
+      }
+
+      // 3. Fallback — копирование ссылки в буфер обмена
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(`${shareText}\n${cleanUrl}`);
         showToast('Ссылка скопирована в буфер обмена 📋');
+      } else {
+        showToast('Ссылка: ' + cleanUrl);
       }
     });
 
