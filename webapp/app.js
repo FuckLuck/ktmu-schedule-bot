@@ -776,9 +776,6 @@
     const card = document.createElement('div');
     const pairNum = lesson.pair_number || 1;
     const skipKey = `${dateStr}:${pairNum}`;
-    const isSkipped = state.skippedPairs.has(skipKey);
-
-    card.className = `lesson-card ${isSkipped ? 'skipped' : ''}`;
 
     // Определение стиля типа занятия
     let typeClass = '';
@@ -787,42 +784,60 @@
     else if (lType.includes('практ')) typeClass = 'type-practice';
     else if (lType.includes('лаб')) typeClass = 'type-lab';
 
-    // Аудитория с подсветкой корпуса
+    // --- Аудитория: Дистант / Вознесенский / обычный корпус ---
     const room = lesson.room || 'Не указана';
-    const isVozn = room.includes('Вознесен') || lesson.is_external;
-    const roomBadge = isVozn ? `🏫 ${room}` : `🚪 Ауд. ${room}`;
+    const roomLower = room.toLowerCase();
+    const isDistant = roomLower.includes('дистант') || roomLower.includes('online') || roomLower.includes('онлайн');
+    const isVozn = room.toLowerCase().includes('вознесен') || lesson.is_external;
 
-    card.innerHTML = `
-      <div class="lesson-top">
-        <div class="lesson-time-badge">
-          <span class="pair-number">${pairNum}</span>
-          <span class="pair-time">${lesson.time || ''}</span>
+    let roomBadge, roomClass;
+    if (isDistant) {
+      roomBadge = '🖥️ Дистант';
+      roomClass = 'room-distant';
+    } else if (isVozn) {
+      roomBadge = `🏛️ Вознесенский пр.`;
+      roomClass = 'room-external';
+    } else {
+      roomBadge = `🚪 Ауд. ${room}`;
+      roomClass = '';
+    }
+
+    function buildCardHTML(skipped) {
+      return `
+        <div class="lesson-top">
+          <div class="lesson-time-badge">
+            <span class="pair-number">${pairNum}</span>
+            <span class="pair-time">${lesson.time || ''}</span>
+          </div>
+          ${lesson.lesson_type ? `<span class="lesson-type-badge ${typeClass}">${lesson.lesson_type}</span>` : ''}
         </div>
-        ${lesson.lesson_type ? `<span class="lesson-type-badge ${typeClass}">${lesson.lesson_type}</span>` : ''}
-      </div>
+        <div class="lesson-subject">${lesson.subject || 'Учебное занятие'}</div>
+        <div class="lesson-details">
+          <span class="detail-item room ${roomClass}">${roomBadge}</span>
+          ${lesson.teacher ? `<span class="detail-item">👤 ${lesson.teacher}</span>` : ''}
+          ${lesson.subgroup ? `<span class="detail-item subgroup">👥 ${lesson.subgroup} подгр.</span>` : ''}
+        </div>
+        <div class="lesson-bottom">
+          <button class="skip-toggle-btn${skipped ? ' is-skipped' : ''}">
+            ${skipped ? '↩️ Я иду на пару' : '💤 Не иду на пару'}
+          </button>
+        </div>
+      `;
+    }
 
-      <div class="lesson-subject">${lesson.subject || 'Учебное занятие'}</div>
+    const isSkipped = state.skippedPairs.has(skipKey);
+    card.className = `lesson-card${isSkipped ? ' skipped' : ''}`;
+    card.innerHTML = buildCardHTML(isSkipped);
 
-      <div class="lesson-details">
-        <span class="detail-item room">${roomBadge}</span>
-        ${lesson.teacher ? `<span class="detail-item">👤 ${lesson.teacher}</span>` : ''}
-        ${lesson.subgroup ? `<span class="detail-item subgroup">👥 ${lesson.subgroup} подгруппа</span>` : ''}
-      </div>
+    // Обработчик клика на кнопку пропуска — обновляет карточку in-place
+    function handleCardClick(e) {
+      const btn = e.target.closest('.skip-toggle-btn');
+      if (!btn) return;
 
-      <div class="lesson-bottom">
-        <button class="skip-toggle-btn">
-          ${isSkipped ? '💤 Пропущена (нажмите чтобы вернуть)' : '💤 Не иду на пару'}
-        </button>
-      </div>
-    `;
-
-    // Клик по кнопке пропуска пары
-    const skipBtn = card.querySelector('.skip-toggle-btn');
-    skipBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       triggerHaptic('impact');
-      const nowSkipped = !state.skippedPairs.has(skipKey);
 
+      const nowSkipped = !state.skippedPairs.has(skipKey);
       if (nowSkipped) {
         state.skippedPairs.add(skipKey);
       } else {
@@ -830,7 +845,13 @@
       }
       saveLocalSkips();
 
-      // Мгновенный подсчет за текущий месяц
+      // Обновляем карточку без перестройки всего расписания
+      card.className = `lesson-card${nowSkipped ? ' skipped' : ''}`;
+      card.innerHTML = buildCardHTML(nowSkipped);
+      card.removeEventListener('click', handleCardClick);
+      card.addEventListener('click', handleCardClick);
+
+      // Подсчет пропусков за месяц
       const currentMonth = dateStr.slice(0, 7);
       let monthlyTotal = 0;
       state.skippedPairs.forEach(k => {
@@ -838,20 +859,16 @@
       });
       state.monthlySkippedTotal = monthlyTotal;
 
-      renderSchedule();
       updateLiveWidget();
 
-      // Немедленный тост с подсчетом пропусков за месяц
       if (nowSkipped) {
-        showToast(`💤 Пара №${pairNum} пропущена! (в этом месяце: ${monthlyTotal})`);
+        showToast(`💤 Пара №${pairNum} пропущена (в месяце: ${monthlyTotal})`);
       } else {
-        showToast(`✅ Пара №${pairNum} возвращена! (в этом месяце: ${monthlyTotal})`);
+        showToast(`✅ Пара №${pairNum} возвращена (в месяце: ${monthlyTotal})`);
       }
+    }
 
-      // Пропуск сохраняется локально в localStorage.
-      // При следующем открытии через /start бот обновит недельные данные.
-    });
-
+    card.addEventListener('click', handleCardClick);
     return card;
   }
 
