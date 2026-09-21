@@ -773,165 +773,188 @@
 
   // --- Создание карточки пары ---
   function createLessonCard(lesson, dateStr) {
-    const card = document.createElement('div');
     const pairNum = lesson.pair_number || 1;
     const skipKey = `${dateStr}:${pairNum}`;
 
-    // Определение стиля типа занятия
+    // Тип занятия
     let typeClass = '';
     const lType = (lesson.lesson_type || '').toLowerCase();
     if (lType.includes('лекц')) typeClass = 'type-lecture';
     else if (lType.includes('практ')) typeClass = 'type-practice';
     else if (lType.includes('лаб')) typeClass = 'type-lab';
 
-    // --- Аудитория: Дистант / Вознесенский / обычный корпус ---
+    // Локация: Дистант / Вознесенский / обычная аудитория
     const room = lesson.room || 'Не указана';
     const roomLower = room.toLowerCase();
     const isDistant = roomLower.includes('дистант') || roomLower.includes('online') || roomLower.includes('онлайн');
-    const isVozn = room.toLowerCase().includes('вознесен') || lesson.is_external;
+    const isVozn = roomLower.includes('вознесен') || lesson.is_external;
 
     let roomBadge, roomClass;
     if (isDistant) {
       roomBadge = '🖥️ Дистант';
       roomClass = 'room-distant';
     } else if (isVozn) {
-      roomBadge = `🏛️ Вознесенский пр.`;
+      roomBadge = '🏛️ Вознесенский пр.';
       roomClass = 'room-external';
     } else {
       roomBadge = `🚪 Ауд. ${room}`;
       roomClass = '';
     }
 
-    function buildCardHTML(skipped) {
-      return `
-        <div class="lesson-top">
-          <div class="lesson-time-badge">
-            <span class="pair-number">${pairNum}</span>
-            <span class="pair-time">${lesson.time || ''}</span>
-          </div>
-          ${lesson.lesson_type ? `<span class="lesson-type-badge ${typeClass}">${lesson.lesson_type}</span>` : ''}
-        </div>
-        <div class="lesson-subject">${lesson.subject || 'Учебное занятие'}</div>
-        <div class="lesson-details">
-          <span class="detail-item room ${roomClass}">${roomBadge}</span>
-          ${lesson.teacher ? `<span class="detail-item">👤 ${lesson.teacher}</span>` : ''}
-          ${lesson.subgroup ? `<span class="detail-item subgroup">👥 ${lesson.subgroup} подгр.</span>` : ''}
-        </div>
-        <div class="lesson-bottom">
-          <button class="skip-toggle-btn${skipped ? ' is-skipped' : ''}">
-            ${skipped ? '↩️ Я иду на пару' : '💤 Не иду на пару'}
-          </button>
-        </div>
-      `;
-    }
+    // Создаём элементы напрямую (без innerHTML для кнопки — надёжнее)
+    const card = document.createElement('div');
 
-    const isSkipped = state.skippedPairs.has(skipKey);
-    card.className = `lesson-card${isSkipped ? ' skipped' : ''}`;
-    card.innerHTML = buildCardHTML(isSkipped);
+    function refreshCard() {
+      const skipped = state.skippedPairs.has(skipKey);
+      card.className = `lesson-card${skipped ? ' skipped' : ''}`;
 
-    // Обработчик клика на кнопку пропуска — обновляет карточку in-place
-    function handleCardClick(e) {
-      const btn = e.target.closest('.skip-toggle-btn');
-      if (!btn) return;
-
-      e.stopPropagation();
-      triggerHaptic('impact');
-
-      const nowSkipped = !state.skippedPairs.has(skipKey);
-      if (nowSkipped) {
-        state.skippedPairs.add(skipKey);
-      } else {
-        state.skippedPairs.delete(skipKey);
+      // lesson-top
+      const top = document.createElement('div');
+      top.className = 'lesson-top';
+      const timeBadge = document.createElement('div');
+      timeBadge.className = 'lesson-time-badge';
+      const numSpan = document.createElement('span');
+      numSpan.className = 'pair-number';
+      numSpan.textContent = pairNum;
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'pair-time';
+      timeSpan.textContent = lesson.time || '';
+      timeBadge.appendChild(numSpan);
+      timeBadge.appendChild(timeSpan);
+      top.appendChild(timeBadge);
+      if (lesson.lesson_type) {
+        const typeBadge = document.createElement('span');
+        typeBadge.className = `lesson-type-badge ${typeClass}`;
+        typeBadge.textContent = lesson.lesson_type;
+        top.appendChild(typeBadge);
       }
-      saveLocalSkips();
 
-      // Обновляем карточку без перестройки всего расписания
-      card.className = `lesson-card${nowSkipped ? ' skipped' : ''}`;
-      card.innerHTML = buildCardHTML(nowSkipped);
-      card.removeEventListener('click', handleCardClick);
-      card.addEventListener('click', handleCardClick);
+      // subject
+      const subj = document.createElement('div');
+      subj.className = 'lesson-subject';
+      subj.textContent = lesson.subject || 'Учебное занятие';
 
-      // Подсчет пропусков за месяц
-      const currentMonth = dateStr.slice(0, 7);
-      let monthlyTotal = 0;
-      state.skippedPairs.forEach(k => {
-        if (k.startsWith(currentMonth)) monthlyTotal++;
+      // details
+      const details = document.createElement('div');
+      details.className = 'lesson-details';
+      const roomEl = document.createElement('span');
+      roomEl.className = `detail-item room${roomClass ? ' ' + roomClass : ''}`;
+      roomEl.textContent = roomBadge;
+      details.appendChild(roomEl);
+      if (lesson.teacher) {
+        const teacherEl = document.createElement('span');
+        teacherEl.className = 'detail-item';
+        teacherEl.textContent = `👤 ${lesson.teacher}`;
+        details.appendChild(teacherEl);
+      }
+      if (lesson.subgroup) {
+        const sgEl = document.createElement('span');
+        sgEl.className = 'detail-item subgroup';
+        sgEl.textContent = `👥 ${lesson.subgroup} подгр.`;
+        details.appendChild(sgEl);
+      }
+
+      // bottom + skip button
+      const bottom = document.createElement('div');
+      bottom.className = 'lesson-bottom';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `skip-toggle-btn${skipped ? ' is-skipped' : ''}`;
+      btn.textContent = skipped ? '↩️ Я иду на пару' : '💤 Не иду на пару';
+
+      // Обработчик кнопки — прямой, без делегирования
+      btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        triggerHaptic('impact');
+
+        const nowSkipped = !state.skippedPairs.has(skipKey);
+        if (nowSkipped) {
+          state.skippedPairs.add(skipKey);
+        } else {
+          state.skippedPairs.delete(skipKey);
+        }
+        saveLocalSkips();
+
+        // Подсчет за месяц
+        const currentMonth = dateStr.slice(0, 7);
+        let monthlyTotal = 0;
+        state.skippedPairs.forEach(k => { if (k.startsWith(currentMonth)) monthlyTotal++; });
+        state.monthlySkippedTotal = monthlyTotal;
+
+        // Перерисовываем карточку
+        card.innerHTML = '';
+        refreshCard();
+
+        updateLiveWidget();
+
+        if (nowSkipped) {
+          showToast(`💤 Пара №${pairNum} пропущена (в месяце: ${monthlyTotal})`);
+        } else {
+          showToast(`✅ Пара №${pairNum} возвращена (в месяце: ${monthlyTotal})`);
+        }
       });
-      state.monthlySkippedTotal = monthlyTotal;
 
-      updateLiveWidget();
+      bottom.appendChild(btn);
 
-      if (nowSkipped) {
-        showToast(`💤 Пара №${pairNum} пропущена (в месяце: ${monthlyTotal})`);
-      } else {
-        showToast(`✅ Пара №${pairNum} возвращена (в месяце: ${monthlyTotal})`);
-      }
+      card.innerHTML = '';
+      card.appendChild(top);
+      card.appendChild(subj);
+      card.appendChild(details);
+      card.appendChild(bottom);
     }
 
-    card.addEventListener('click', handleCardClick);
+    refreshCard();
     return card;
   }
 
-  // --- Поддержка плавных жестов свайпа (Swipe between days) ---
+  // --- Поддержка свайпа по ленте дней (только по навигации, не по карточкам) ---
   function setupSwipeGestures() {
-    // Вешаем на app-container, чтобы не блокировать клики по кнопкам внутри карточек
-    const container = document.getElementById('app-container') || document.body;
-    let touchStartX = 0;
-    let touchStartY = 0;
-    let touchStartTime = 0;
-    let isSwiping = false;
+    // Свайп только по области расписания, но НЕ по кнопкам
+    const scheduleArea = document.getElementById('lessons-timeline');
+    const daysNavWrapper = document.querySelector('.days-nav-wrapper');
+    let startX = 0;
+    let startY = 0;
+    let startTime = 0;
 
-    container.addEventListener('touchstart', (e) => {
-      const touch = e.touches[0];
-      touchStartX = touch.clientX;
-      touchStartY = touch.clientY;
-      touchStartTime = Date.now();
-      isSwiping = false;
-    }, { passive: true });
+    function onTouchStart(e) {
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      startTime = Date.now();
+    }
 
-    container.addEventListener('touchmove', (e) => {
-      if (!isSwiping) {
-        const dx = Math.abs(e.touches[0].clientX - touchStartX);
-        const dy = Math.abs(e.touches[0].clientY - touchStartY);
-        if (dx > 10 && dx > dy * 1.5) {
-          isSwiping = true;
+    function onTouchEnd(e) {
+      // Игнорируем если начали на кнопке
+      if (e.target && e.target.closest('button')) return;
+
+      const dx = e.changedTouches[0].clientX - startX;
+      const dy = e.changedTouches[0].clientY - startY;
+      const dt = Date.now() - startTime;
+
+      if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 2 && dt < 500) {
+        if (dx < 0 && state.selectedDayIndex < state.weekDays.length - 1) {
+          triggerHaptic('selection');
+          state.selectedDayIndex++;
+          animateDaySwitch('next');
+        } else if (dx > 0 && state.selectedDayIndex > 0) {
+          triggerHaptic('selection');
+          state.selectedDayIndex--;
+          animateDaySwitch('prev');
         }
       }
-    }, { passive: true });
+    }
 
-    container.addEventListener('touchend', (e) => {
-      if (!isSwiping) return;
-      const touch = e.changedTouches[0];
-      const deltaX = touch.clientX - touchStartX;
-      const deltaY = touch.clientY - touchStartY;
-      const duration = Date.now() - touchStartTime;
+    // Вешаем ТОЛЬКО на область расписания (не на кнопки!)
+    if (scheduleArea) {
+      scheduleArea.addEventListener('touchstart', onTouchStart, { passive: true });
+      scheduleArea.addEventListener('touchend', onTouchEnd, { passive: true });
+    }
+    if (daysNavWrapper) {
+      daysNavWrapper.addEventListener('touchstart', onTouchStart, { passive: true });
+      daysNavWrapper.addEventListener('touchend', onTouchEnd, { passive: true });
+    }
 
-      // Свайп влево или вправо (дистанция от 50px, горизонтальное смещение больше вертикального)
-      if (Math.abs(deltaX) >= 50 && Math.abs(deltaX) > Math.abs(deltaY) * 1.5 && duration < 600) {
-        // Проверяем что свайп не начался внутри кнопки
-        const target = e.target;
-        if (target && (target.closest('button') || target.closest('.skip-toggle-btn') || target.closest('.subgroup-btn'))) {
-          return;
-        }
-        if (deltaX < 0) {
-          // Свайп влево: следующий день
-          if (state.selectedDayIndex < state.weekDays.length - 1) {
-            triggerHaptic('selection');
-            state.selectedDayIndex++;
-            animateDaySwitch('next');
-          }
-        } else {
-          // Свайп вправо: предыдущий день
-          if (state.selectedDayIndex > 0) {
-            triggerHaptic('selection');
-            state.selectedDayIndex--;
-            animateDaySwitch('prev');
-          }
-        }
-      }
-    }, { passive: true });
-
-    // Поддержка перелистывания стрелками на клавиатуре
+    // Клавиатура
     document.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowLeft' && state.selectedDayIndex > 0) {
         state.selectedDayIndex--;
