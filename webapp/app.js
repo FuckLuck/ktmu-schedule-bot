@@ -6,9 +6,24 @@
 (function () {
   'use strict';
 
-  // Защита: если скрипт случайно запущен в среде Node.js вместо браузера
+  // Защита и авто-прокси: если скрипт запущен хостингом через Node.js вместо браузера
   if (typeof window === 'undefined') {
-    console.error('webapp/app.js — это клиентский скрипт Mini App для браузера. Бот запускается командой: python main.py');
+    console.log('[Bothost Auto-launcher] webapp/app.js запущен через Node.js.');
+    console.log('[Bothost Auto-launcher] Перенаправляем выполнение на основной файл бота: python main.py...');
+    try {
+      const { spawn } = require('child_process');
+      const pyCmd = process.platform === 'win32' ? 'python' : 'python3';
+      const py = spawn(pyCmd, ['main.py'], { stdio: 'inherit' });
+      py.on('error', (err) => {
+        console.warn(`[Bothost Auto-launcher] Не удалось запустить через ${pyCmd}, пробуем 'python':`, err.message);
+        const fallback = spawn('python', ['main.py'], { stdio: 'inherit' });
+        fallback.on('error', (e) => {
+          console.error('[Bothost] Пожалуйста, в панели Bothost во вкладке «Запуск» смените главный файл на main.py!', e);
+        });
+      });
+    } catch (e) {
+      console.error('webapp/app.js — это клиентский скрипт Mini App. В панели Bothost во вкладке «Запуск» установите главный файл: main.py');
+    }
     return;
   }
 
