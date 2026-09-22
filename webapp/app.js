@@ -6,6 +6,12 @@
 (function () {
   'use strict';
 
+  // Защита: если скрипт случайно запущен в среде Node.js вместо браузера
+  if (typeof window === 'undefined') {
+    console.error('webapp/app.js — это клиентский скрипт Mini App для браузера. Бот запускается командой: python main.py');
+    return;
+  }
+
   // --- Telegram WebApp SDK ---
   const tg = window.Telegram?.WebApp;
   if (tg) {
