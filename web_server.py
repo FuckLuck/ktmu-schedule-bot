@@ -18,23 +18,48 @@ logger = logging.getLogger(__name__)
 WEBAPP_DIR = Path(__file__).resolve().parent / "webapp"
 
 
+from datetime import date, datetime, timedelta
+
+DB_KEY = web.AppKey("database", Database)
+
+
 async def handle_health(request: web.Request) -> web.Response:
     """Проверка жизнеспособности сервиса."""
-    return web.json_response({"status": "ok", "app": "ktmu-schedule-webapp"})
+    return web.json_response({"status": "ok", "app": "ktmu-schedule-webapp"}, headers={"Access-Control-Allow-Origin": "*"})
+
+
+async def handle_get_groups(request: web.Request) -> web.Response:
+    """
+    API эндпоинт: возвращает список всех групп и специальностей.
+    GET /api/groups
+    """
+    db: Database = request.app.get(DB_KEY, default_db)
+    groups = await db.get_all_groups()
+    specialties = await db.get_all_specialties()
+    return web.json_response(
+        {"groups": groups, "specialties": specialties},
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
 
 
 async def handle_get_schedule(request: web.Request) -> web.Response:
     """
     API эндпоинт: возвращает расписание на неделю для указанной группы.
-    GET /api/schedule?group_id=...&group_name=...
+    GET /api/schedule?group_id=...&group_name=...&date=YYYY-MM-DD&week_offset=0
     """
     group_id = request.query.get("group_id", "").strip()
     group_name = request.query.get("group_name", "").strip()
+    date_param = request.query.get("date", "").strip()
+    week_offset_raw = request.query.get("week_offset", "0").strip()
 
     if not group_id and not group_name:
-        return web.json_response({"error": "group_id or group_name required"}, status=400)
+        return web.json_response(
+            {"error": "group_id or group_name required"},
+            status=400,
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
 
-    db: Database = request.app.get("database", default_db)
+    db: Database = request.app.get(DB_KEY, default_db)
 
     # Если передан group_name, ищем group_id в БД
     if not group_id and group_name:
@@ -45,21 +70,46 @@ async def handle_get_schedule(request: web.Request) -> web.Response:
                 break
 
     if not group_id:
-        return web.json_response({"error": f"group '{group_name}' not found"}, status=404)
+        return web.json_response(
+            {"error": f"group '{group_name}' not found"},
+            status=404,
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
 
     group_data = await db.get_group_by_id(group_id)
     url = group_data.get("relative_url", "") if group_data else ""
     actual_name = group_data.get("group_name", group_name or group_id) if group_data else group_name
 
+    target_date = date.today()
+    if date_param:
+        try:
+            target_date = datetime.strptime(date_param, "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    try:
+        offset_weeks = int(week_offset_raw)
+        if offset_weeks:
+            target_date = target_date + timedelta(days=offset_weeks * 7)
+    except ValueError:
+        pass
+
     try:
         week_schedule = await timetable_parser.fetch_week_schedule(
-            group_id=group_id, group_url=url
+            group_id=group_id, group_url=url, start_date=target_date
         )
-        return web.json_response({
-            "group_id": group_id,
-            "group_name": actual_name,
-            "days": week_schedule
-        })
+        sample = week_schedule[0] if week_schedule else {}
+        week_num = sample.get("week_number", timetable_parser.calculate_academic_week(target_date, f"{target_date.year}-09-01"))
+        is_even = sample.get("is_even_week", sample.get("is_even", week_num % 2 == 0))
+        return web.json_response(
+            {
+                "group_id": group_id,
+                "group_name": actual_name,
+                "week_number": week_num,
+                "is_even": is_even,
+                "days": week_schedule,
+            },
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
     except Exception as e:
         logger.error("Ошибка API /api/schedule для %s: %s", group_id, e)
         return web.json_response(
@@ -75,7 +125,7 @@ async def handle_toggle_skip(request: web.Request) -> web.Response:
     POST /api/skip
     Body: {"user_id": int, "date": "YYYY-MM-DD", "pair_number": int}
     """
-    db: Database = request.app.get("database", default_db)
+    db: Database = request.app.get(DB_KEY, default_db)
     try:
         data = await request.json()
     except Exception:
@@ -126,7 +176,7 @@ async def handle_get_skips(request: web.Request) -> web.Response:
     API эндпоинт: получение списка и статистики пропущенных пар студента.
     GET /api/skips?user_id=123&month=YYYY-MM
     """
-    db: Database = request.app.get("database", default_db)
+    db: Database = request.app.get(DB_KEY, default_db)
     user_id_raw = request.query.get("user_id", "").strip()
     month = request.query.get("month", "").strip() or None
 
@@ -157,10 +207,11 @@ async def handle_options(request: web.Request) -> web.Response:
 def create_web_app(database: Optional[Database] = None) -> web.Application:
     """Создает и настраивает aiohttp web-приложение."""
     app = web.Application()
-    app["database"] = database or default_db
+    app[DB_KEY] = database or default_db
 
     # API маршруты
     app.router.add_get("/health", handle_health)
+    app.router.add_get("/api/groups", handle_get_groups)
     app.router.add_get("/api/schedule", handle_get_schedule)
     app.router.add_post("/api/skip", handle_toggle_skip)
     app.router.add_get("/api/skips", handle_get_skips)

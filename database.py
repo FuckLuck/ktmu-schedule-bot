@@ -815,6 +815,18 @@ class Database:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
 
+    async def get_all_groups(self) -> list[dict[str, str]]:
+        """
+        Возвращает список всех учебных групп из базы данных.
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT id, specialty_name, group_name, relative_url FROM groups ORDER BY specialty_name ASC, group_name ASC"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+
     async def get_group_by_id(self, group_id: str) -> Optional[dict[str, str]]:
         """
         Возвращает информацию о группе по её идентификатору.

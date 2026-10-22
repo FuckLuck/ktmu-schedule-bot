@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Author](https://img.shields.io/badge/Author-@yapsychokid-informational?logo=telegram&logoColor=white)](https://t.me/yapsychokid)
 
-Асинхронный Telegram-бот для студентов колледжа КТМУ с поддержкой **всех специальностей и групп** с сайта [timetable-ktmu.ru](https://timetable-ktmu.ru/).
+Асинхронный Telegram-бот для студентов колледжа КТМУ с поддержкой **всех специальностей и групп** с сайта [raspisanie-ktmu.ru](https://raspisanie-ktmu.ru/).
 
 ---
 
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS timetable_cache (
    Укажите ваш токен от [@BotFather](https://t.me/BotFather):
    ```env
    BOT_TOKEN=ВАШ_ТОКЕН_БОТА
-   BASE_URL=https://timetable-ktmu.ru
+   BASE_URL=https://raspisanie-ktmu.ru
    DATABASE_PATH=ktmu_bot.db
    TIMEZONE=Europe/Moscow
    CACHE_TTL_HOURS=6
@@ -187,7 +187,7 @@ docker compose up -d --build
    - Откройте файл `.env` в корне проекта:
      ```env
      BOT_TOKEN=ВАШ_ТОКЕН_ОТ_BOTFATHER
-     BASE_URL=https://timetable-ktmu.ru
+     BASE_URL=https://raspisanie-ktmu.ru
      DATABASE_PATH=ktmu_bot.db
      TIMEZONE=Europe/Moscow
      CACHE_TTL_HOURS=6

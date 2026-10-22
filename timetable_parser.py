@@ -71,7 +71,7 @@ class TimetableParser:
     Парсер и менеджер расписания колледжа КТМУ с кэшированием в SQLite.
     Поддерживает:
     - Парсинг HTML-таблиц (BeautifulSoup4)
-    - Парсинг структуры API расписания (React SPA timetable-ktmu.ru)
+    - Парсинг структуры API расписания (React SPA raspisanie-ktmu.ru)
     - Учет семестровых недель, четности, подгрупп и форматов
     """
 
@@ -209,6 +209,8 @@ class TimetableParser:
         week_parity_overrides = config_data.get("weekParityOverrides", {})
         if target_date_str in week_parity_overrides:
             week_parity = week_parity_overrides[target_date_str]
+        elif str(academic_week) in week_parity_overrides:
+            week_parity = week_parity_overrides[str(academic_week)]
         else:
             week_parity = "even" if academic_week % 2 == 0 else "odd"
 
@@ -355,11 +357,13 @@ class TimetableParser:
         for p_num in sorted(lessons_map.keys()):
             sorted_lessons.extend(lessons_map[p_num])
 
+        is_even_val = (week_parity == "even")
         return {
             "date": target_date.isoformat(),
             "day_name": DAY_NAMES_RU[target_weekday],
             "week_number": academic_week,
-            "is_even_week": academic_week % 2 == 0,
+            "is_even_week": is_even_val,
+            "is_even": is_even_val,
             "lessons": sorted_lessons,
         }
 
@@ -554,6 +558,197 @@ class TimetableParser:
             logger.info("Фоновый прогрев всех активных групп завершен!")
         except Exception as e:
             logger.warning("Ошибка фонового прогрева активных групп: %s", e)
+
+    async def export_webapp_schedule_db(self, output_path: Optional[str] = None) -> bool:
+        """
+        Экспортирует компактную базу расписания всех групп на все недели семестра в webapp/schedule-db.json
+        для мгновенного переключения недель и групп внутри Telegram Mini App.
+        """
+        from pathlib import Path
+        from structure_parser import STANDARD_SPECIALTIES
+
+        if not output_path:
+            output_path = str(Path(__file__).resolve().parent / "webapp" / "schedule-db.json")
+
+        try:
+            session = await self.get_session()
+            val = await self._fetch_site_data(session)
+            if not val or "schedule" not in val:
+                return False
+
+            config_data = val.get("config", {})
+            period_times = [clean_period_time(pt) for pt in config_data.get("periodTimes", config.DEFAULT_PERIOD_TIMES)]
+            voz_times = [clean_period_time(pt) for pt in config_data.get("voznesenskyPeriodTimes", config.DEFAULT_VOZNESENSKY_PERIOD_TIMES)]
+            if not any(voz_times):
+                voz_times = [clean_period_time(pt) for pt in config.DEFAULT_VOZNESENSKY_PERIOD_TIMES]
+
+            type_mapping = {
+                "лек": "Лекция",
+                "лекция": "Лекция",
+                "пр": "Практика",
+                "практика": "Практика",
+                "лаб": "Лабораторная",
+                "лабораторная": "Лабораторная",
+                "контрработа": "Контрольная работа",
+                "контрольная работа": "Контрольная работа",
+                "зч": "Зачёт",
+                "зачёт": "Зачёт",
+                "зачет": "Зачёт",
+                "зчо": "Дифф. зачёт",
+                "дифференцированный зачёт": "Дифф. зачёт",
+                "курсработа": "Курсовая работа",
+                "индпроект": "Инд. проект",
+            }
+
+            spec_map: dict[str, str] = {}
+            for s in val.get("specialties", []):
+                if "id" not in s:
+                    continue
+                raw_name = s.get("name", "").strip()
+                code_match = re.search(r"\b(\d{2}\.\d{2}\.\d{2})\b", raw_name)
+                if code_match and code_match.group(1) in STANDARD_SPECIALTIES:
+                    spec_map[s["id"]] = STANDARD_SPECIALTIES[code_match.group(1)]
+                else:
+                    spec_map[s["id"]] = raw_name or "Специальность"
+
+            groups_out = []
+            group_id_to_name: dict[str, str] = {}
+            for g in val.get("groups", []):
+                gid = str(g.get("id", "")).strip()
+                gname = str(g.get("name", "")).strip()
+                if not gid or not gname:
+                    continue
+                group_id_to_name[gid] = gname
+                spec_id = str(g.get("specialtyId", "")).strip()
+                course_match = re.match(r"^(\d)", gname)
+                course_num = int(course_match.group(1)) if course_match else 1
+                g_entry: dict[str, Any] = {
+                    "id": gid,
+                    "name": gname,
+                    "specialty": spec_map.get(spec_id, "Специальность"),
+                    "course": course_num,
+                }
+                if g.get("dayPeriodTimes"):
+                    g_entry["dayPeriodTimes"] = g["dayPeriodTimes"]
+                if g.get("dayPeriodTimesByParity"):
+                    g_entry["dayPeriodTimesByParity"] = g["dayPeriodTimesByParity"]
+                groups_out.append(g_entry)
+
+            groups_out.sort(key=lambda x: (x["course"], x["name"]))
+
+            subj_map = {x["id"]: x.get("name", "Учебное занятие").strip() for x in val.get("subjects", []) if "id" in x}
+            teach_map = {x["id"]: x.get("name", "").strip() for x in val.get("teachers", []) if "id" in x}
+            room_map = {}
+            for r in val.get("rooms", []):
+                if "id" not in r:
+                    continue
+                rname = r.get("name", "").strip()
+                is_ext = bool(
+                    r.get("isExternal")
+                    or (rname and (rname.startswith(("В-", "В ", "в-", "в ")) or "вознесен" in rname.lower()))
+                )
+                room_map[r["id"]] = (rname, 1 if is_ext else 0)
+
+            raw_types = {x["id"]: x.get("name", "").strip() for x in val.get("lessonTypes", []) if "id" in x}
+
+            subj_list: list[str] = []
+            subj_idx: dict[str, int] = {}
+            teach_list: list[str] = []
+            teach_idx: dict[str, int] = {}
+            room_list: list[list[Any]] = []
+            room_idx: dict[tuple[str, int], int] = {}
+            type_list: list[str] = []
+            type_idx: dict[str, int] = {}
+
+            def _idx(item: Any, lst: list[Any], dct: dict[Any, int]) -> int:
+                if item not in dct:
+                    dct[item] = len(lst)
+                    lst.append(list(item) if isinstance(item, tuple) else item)
+                return dct[item]
+
+            sched = val.get("schedule", {})
+            ass = sched.get("assignment", {})
+            instances = sched.get("instances", [])
+
+            by_group: dict[str, dict[tuple[Any, ...], set[int]]] = {}
+            max_week = 16
+
+            for inst in instances:
+                iid = inst.get("instId")
+                if not iid or iid not in ass:
+                    continue
+                a = ass[iid]
+                gids = [inst.get("groupId")] + (inst.get("streamGroupIds") or [])
+                gnames = [group_id_to_name[g] for g in dict.fromkeys(gids) if g and g in group_id_to_name]
+                if not gnames:
+                    continue
+
+                s_name = subj_map.get(inst.get("subjectId"), "Учебное занятие")
+                t_name = teach_map.get(inst.get("teacherId"), "")
+                r_tuple = room_map.get(a.get("roomId", ""), ("", 0))
+                raw_t_name = raw_types.get(inst.get("typeId", ""), "")
+                mapped_type = type_mapping.get(raw_t_name.lower(), raw_t_name or "Занятие")
+
+                s_i = _idx(s_name, subj_list, subj_idx)
+                t_i = _idx(t_name, teach_list, teach_idx)
+                r_i = _idx(r_tuple, room_list, room_idx)
+                tp_i = _idx(mapped_type, type_list, type_idx)
+
+                rem = 1 if inst.get("format") == "remote" else 0
+                sub = int(inst.get("subgroup") or 0)
+                wp = inst.get("weekPattern", "every")
+                day = int(a.get("day", 0))
+                per = int(a.get("period", 0))
+                cweeks = inst.get("customWeeks") or []
+                for w in cweeks:
+                    if isinstance(w, int) and w > max_week:
+                        max_week = w
+
+                for gname in gnames:
+                    gdict = by_group.setdefault(gname, {})
+                    key = (day, per, s_i, t_i, r_i, tp_i, rem, sub, wp)
+                    if key not in gdict:
+                        gdict[key] = set()
+                    for w in cweeks:
+                        if isinstance(w, int):
+                            gdict[key].add(w)
+
+            schedules_compact: dict[str, list[list[Any]]] = {}
+            for gname, gdict in by_group.items():
+                items_sorted = sorted(gdict.items(), key=lambda kv: (kv[0][0], kv[0][1], kv[0][7]))
+                schedules_compact[gname] = [
+                    [k[0], k[1], k[2], k[3], k[4], k[5], k[6], k[7], k[8], sorted(wset)]
+                    for k, wset in items_sorted
+                ]
+
+            payload = {
+                "updatedAt": datetime.now().isoformat(),
+                "config": {
+                    "semesterStart": config_data.get("semesterStart", "2026-09-01"),
+                    "semesterEnd": config_data.get("semesterEnd", "2026-12-21"),
+                    "maxWeek": max_week,
+                    "publishedWeeks": val.get("publishedWeeks", []),
+                    "periodTimes": period_times,
+                    "voznesenskyPeriodTimes": voz_times,
+                    "weekParityOverrides": config_data.get("weekParityOverrides", {}),
+                },
+                "groups": groups_out,
+                "subjects": subj_list,
+                "teachers": teach_list,
+                "rooms": room_list,
+                "types": type_list,
+                "schedules": schedules_compact,
+            }
+
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+
+            logger.info("База расписания для Mini App успешно экспортирована в %s (%d групп)", output_path, len(groups_out))
+            return True
+        except Exception as e:
+            logger.warning("Не удалось экспортировать базу для Mini App: %s", e)
+            return False
 
 
 # -------------------------------------------------------------------------

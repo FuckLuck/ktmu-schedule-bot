@@ -2,11 +2,12 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="0; url=./webapp/">
   <title>Перенаправление в Расписание КТМУ...</title>
+  <script>
+    window.location.replace('./webapp/' + (window.location.search || '') + (window.location.hash || ''));
+  </script>
 </head>
 <body>
   <p>Загрузка <a href="./webapp/">Расписания КТМУ</a>...</p>
-  <script>window.location.href = './webapp/';</script>
 </body>
 </html>

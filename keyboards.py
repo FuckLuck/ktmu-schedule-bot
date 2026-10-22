@@ -1537,12 +1537,17 @@ def pack_schedule_for_webapp(
     for day in week_days:
         lessons = []
         for l in day.get("lessons", []):
+            fmt = l.get("format", "")
+            room_val = l.get("room", "")
+            if not room_val and fmt == "Дистанционно":
+                room_val = "Дистант"
             lessons.append({
                 "pair_number": l.get("pair_number"),
                 "time": l.get("time", ""),
                 "subject": l.get("subject", ""),
                 "lesson_type": l.get("lesson_type", ""),
-                "room": l.get("room", ""),
+                "room": room_val,
+                "format": fmt,
                 "teacher": l.get("teacher", ""),
                 "subgroup": l.get("subgroup", 0),
                 "is_external": l.get("is_external", False),
@@ -1552,6 +1557,10 @@ def pack_schedule_for_webapp(
             "day_name": day.get("day_name", ""),
             "lessons": lessons,
         })
+
+    if week_days and week_number == 1 and "week_number" in week_days[0]:
+        week_number = week_days[0].get("week_number", week_number)
+        is_even = week_days[0].get("is_even_week", week_days[0].get("is_even", is_even))
 
     payload: dict[str, Any] = {
         "group_name": group_name,
@@ -1589,6 +1598,9 @@ def build_webapp_url(
         base_url = settings.WEBAPP_SCHEDULE_URL or "https://ktmu-schedule-bot-plqd-one.vercel.app/"
 
     if week_days:
+        if week_number == 1 and "week_number" in week_days[0]:
+            week_number = week_days[0].get("week_number", week_number)
+            is_even = week_days[0].get("is_even_week", week_days[0].get("is_even", is_even))
         b64_data = pack_schedule_for_webapp(
             week_days, group_name, week_number, is_even, subgroup,
             user_id=user_id, skipped_pairs=skipped_pairs,

@@ -28,7 +28,7 @@ STANDARD_SPECIALTIES = {
 
 class StructureParser:
     """
-    Парсер структуры сайта расписания колледжа (https://timetable-ktmu.ru/).
+    Парсер структуры сайта расписания колледжа (https://raspisanie-ktmu.ru/).
     Реализует гибридный подход:
     1. Парсинг HTML-ссылок через BeautifulSoup4 (в соответствии с классической моделью сайта).
     2. Прямой разбор API хранилища данных (на случай SPA-рендеринга на стороне клиента).
@@ -137,7 +137,7 @@ class StructureParser:
 
     async def _parse_storage_api_structure(self, session: aiohttp.ClientSession) -> list[dict[str, str]]:
         """
-        Парсинг актуальных данных структуры из API бэкенда (timetable-ktmu.ru SPA).
+        Парсинг актуальных данных структуры из API бэкенда (raspisanie-ktmu.ru SPA).
         Извлекает все специальности, сопоставляет группы и формирует канонические относительные URL.
         """
         api_url = f"{self.base_url}/api/storage/schedule-data-v2"
@@ -192,7 +192,7 @@ class StructureParser:
     async def sync_structure(self) -> list[dict[str, str]]:
         """
         Главная функция синхронизации структуры колледжа:
-        1. Заходит на сайт https://timetable-ktmu.ru/
+        1. Заходит на сайт https://raspisanie-ktmu.ru/
         2. Обходит специальности и парсит группы и ссылки на них
         3. Сохраняет и обновляет список групп в SQLite таблице groups
         """

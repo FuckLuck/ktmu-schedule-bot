@@ -380,7 +380,7 @@ async def sync_user_menu_button(
 
         sched_sample = week_schedule[0] if week_schedule else {}
         week_num = sched_sample.get("week_number", 4)
-        is_even = sched_sample.get("is_even", False)
+        is_even = sched_sample.get("is_even_week", sched_sample.get("is_even", week_num % 2 == 0))
 
         skipped_list = []
         if week_schedule:
@@ -1018,14 +1018,17 @@ async def send_day_schedule_with_image(
                 for p_num in u_skips:
                     skipped_list.append(f"{d_date}:{p_num}")
 
+    sched_week_num = sched.get("week_number", 4)
+    sched_is_even = sched.get("is_even_week", sched.get("is_even", sched_week_num % 2 == 0))
     webapp_url = build_webapp_url(
         group_name=group_name,
         subgroup=user_subgroup,
         week_days=week_schedule if week_schedule else [sched],
-        week_number=sched.get("week_number", 4),
-        is_even=sched.get("is_even", False),
+        week_number=sched_week_num,
+        is_even=sched_is_even,
         user_id=chat_id if chat_id > 0 else None,
         skipped_pairs=skipped_list if skipped_list else None,
+        subgroup_chosen=(user_subgroup > 0),
     )
     kb = get_schedule_bonch_keyboard(
         target_date=target_date,
@@ -2039,7 +2042,7 @@ def get_help_section_text(section: str) -> str:
             "• /help — Инструкция и справка по работе бота\n"
             "• /author — Связь с автором (@yapsychokid)\n\n"
             "👑 <i>Команда администратора бота:</i> /admin\n"
-            "🌐 <i>Источник данных:</i> <a href='https://timetable-ktmu.ru/'>timetable-ktmu.ru</a>"
+            "🌐 <i>Источник данных:</i> <a href='https://raspisanie-ktmu.ru/'>raspisanie-ktmu.ru</a>"
         )
     else:  # "main"
         return (
@@ -5013,12 +5016,19 @@ async def handle_open_webapp(message: Message, database: Database = default_db):
                 for p_num in u_skips:
                     skipped_list.append(f"{d_date}:{p_num}")
 
+    sched_sample = week_schedule[0] if week_schedule else {}
+    week_num = sched_sample.get("week_number", timetable_parser.calculate_academic_week(today, f"{today.year}-09-01"))
+    is_even = sched_sample.get("is_even_week", sched_sample.get("is_even", week_num % 2 == 0))
+
     webapp_url = build_webapp_url(
         group_name=group_name,
         subgroup=user_sub,
         week_days=week_schedule if week_schedule else None,
+        week_number=week_num,
+        is_even=is_even,
         user_id=user_id,
         skipped_pairs=skipped_list if skipped_list else None,
+        subgroup_chosen=(user_sub > 0),
     )
 
     kb = get_webapp_inline_keyboard(webapp_url, lang=lang)

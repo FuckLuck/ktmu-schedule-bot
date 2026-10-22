@@ -31,15 +31,42 @@
               <h1 id="group-title" class="group-title">Загрузка...</h1>
               <span class="group-chevron">▼</span>
             </div>
-            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px;">
-              <span id="week-badge" class="week-badge">Учебная неделя</span>
-              <span id="subgroup-badge" class="subgroup-header-badge" id="subgroup-badge-trigger" title="Нажмите, чтобы сменить подгруппу">👥 Подгруппа</span>
+            <div class="header-badges-row">
+              <span id="subgroup-badge" class="subgroup-header-badge" title="Нажмите, чтобы сменить подгруппу">👥 Все пары ▾</span>
+              <span id="skips-header-badge" class="skips-header-badge" title="Пропущено пар за текущий месяц" style="display: none;">💤 0 пар</span>
             </div>
           </div>
         </div>
-        <button id="theme-toggle" class="icon-button" aria-label="Сменить тему" title="Сменить тему">
-          <span class="theme-icon">🌙</span>
+        <div class="header-actions">
+          <button id="bells-toggle" class="icon-button" aria-label="Расписание звонков" title="Расписание звонков">
+            <span>🔔</span>
+          </button>
+          <button id="theme-toggle" class="icon-button" aria-label="Сменить тему" title="Сменить тему">
+            <span class="theme-icon">🌙</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Панель переключения учебных недель -->
+      <div class="week-switcher-bar" id="week-switcher-bar">
+        <button id="prev-week-btn" class="week-nav-btn" aria-label="Предыдущая неделя" title="Предыдущая неделя">
+          ‹
         </button>
+        <div class="week-info-center" id="week-picker-trigger" title="Нажмите для выбора недели">
+          <div class="week-title-row">
+            <span id="week-badge" class="week-badge">Неделя 1 • нечётная</span>
+            <span class="week-dropdown-caret">▾</span>
+          </div>
+          <span id="week-dates-range" class="week-dates-range">Учебная неделя</span>
+        </div>
+        <div class="week-right-controls">
+          <button id="btn-go-today" class="today-jump-btn" style="display: none;" title="Вернуться на сегодня">
+            Сегодня
+          </button>
+          <button id="next-week-btn" class="week-nav-btn" aria-label="Следующая неделя" title="Следующая неделя">
+            ›
+          </button>
+        </div>
       </div>
     </header>
 
@@ -93,7 +120,7 @@
     <div class="search-container">
       <div class="search-input-wrapper">
         <span class="search-icon">🔍</span>
-        <input type="text" id="search-input" placeholder="Поиск по предмету или преподавателю..." autocomplete="off">
+        <input type="text" id="search-input" placeholder="Поиск по предмету, кабинету или преподавателю..." autocomplete="off">
         <button id="search-clear" class="search-clear-btn" style="display: none;">✕</button>
       </div>
     </div>
@@ -101,8 +128,11 @@
     <!-- Список занятий на выбранный день -->
     <main class="schedule-content">
       <div class="day-header-info">
-        <h2 id="current-day-label" class="current-day-label">Понедельник</h2>
-        <span id="current-day-date" class="current-day-date">21 сентября</span>
+        <div class="day-header-left">
+          <h2 id="current-day-label" class="current-day-label">Понедельник</h2>
+          <span id="current-day-date" class="current-day-date">21 сентября</span>
+        </div>
+        <div id="day-summary-pills" class="day-summary-pills"></div>
       </div>
 
       <div class="lessons-timeline" id="lessons-timeline">
@@ -112,8 +142,8 @@
       <!-- Состояние отсутствия пар -->
       <div class="empty-state" id="empty-state" style="display: none;">
         <div class="empty-icon">🎉</div>
-        <h3 class="empty-title">В этот день пар нет!</h3>
-        <p class="empty-desc">Отличный повод отдохнуть или подготовиться к занятиям.</p>
+        <h3 class="empty-title" id="empty-title">В этот день пар нет!</h3>
+        <p class="empty-desc" id="empty-desc">Отличный повод отдохнуть или подготовиться к занятиям.</p>
       </div>
     </main>
 
@@ -133,14 +163,59 @@
 
   <!-- Модальное окно выбора группы -->
   <div id="group-modal" class="modal-overlay" style="display: none;">
-    <div class="modal-card">
+    <div class="modal-card modal-card-large">
       <div class="modal-header">
         <h3>Выберите группу</h3>
         <button id="close-group-modal" class="modal-close-btn">&times;</button>
       </div>
       <div class="modal-body">
-        <p class="modal-desc">Выберите вашу учебную группу в колледже КТМУ:</p>
+        <div class="modal-search-wrapper">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="group-search-input" placeholder="Быстрый поиск группы (например, 1-ИС-1)..." autocomplete="off">
+        </div>
+        <div class="course-tabs" id="course-tabs">
+          <button class="course-tab active" data-course="0">Все</button>
+          <button class="course-tab" data-course="1">1 курс</button>
+          <button class="course-tab" data-course="2">2 курс</button>
+          <button class="course-tab" data-course="3">3 курс</button>
+          <button class="course-tab" data-course="4">4 курс</button>
+        </div>
         <div class="group-select-list" id="group-select-list">
+          <!-- Генерируется через JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальное окно выбора учебной недели -->
+  <div id="week-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>📅 Выберите учебную неделю</h3>
+        <button id="close-week-modal" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">Быстрый переход к любой неделе семестра:</p>
+        <div class="week-select-list" id="week-select-list">
+          <!-- Генерируется через JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Модальное окно расписания звонков -->
+  <div id="bells-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>🔔 Расписание звонков</h3>
+        <button id="close-bells-modal" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="bells-tabs">
+          <button class="bells-tab active" data-corpus="main">🏛️ Мойка, 61</button>
+          <button class="bells-tab" data-corpus="voz">🏛️ Вознесенский, 44</button>
+        </div>
+        <div class="bells-list" id="bells-list">
           <!-- Генерируется через JS -->
         </div>
       </div>

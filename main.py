@@ -59,8 +59,9 @@ async def on_startup(bot: Bot) -> None:
     # 4. Если бот запущен днем, сразу планируем оставшиеся пары на сегодня
     asyncio.create_task(scheduler_service.schedule_today_pairs_notifications())
 
-    # 5. Фоновый прогрев расписания для всех активных групп (мгновенная отдача без ожидания)
+    # 5. Фоновый прогрев расписания для всех активных групп и обновление базы Mini App
     asyncio.create_task(timetable_parser.preload_active_groups_schedules(db))
+    asyncio.create_task(timetable_parser.export_webapp_schedule_db())
 
     # 6. Автоматическая регистрация команд в меню Telegram
     from aiogram.types import BotCommand, MenuButtonWebApp, WebAppInfo

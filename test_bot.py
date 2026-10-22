@@ -48,7 +48,7 @@ async def test_database_user_flow(test_db):
     await test_db.upsert_user(
         user_id=12345,
         group_id="grp_1",
-        group_url="https://timetable-ktmu.ru/specialty/1/year/2026/group/grp_1",
+        group_url="https://raspisanie-ktmu.ru/specialty/1/year/2026/group/grp_1",
         group_name="1-ИС-1",
         notifications_enabled=True,
     )
