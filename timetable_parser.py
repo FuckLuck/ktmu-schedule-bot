@@ -409,11 +409,15 @@ class TimetableParser:
 
             if lessons:
                 target_weekday = target_date.weekday()
+                sem_start_str = f"{target_date.year if target_date.month >= 8 else target_date.year - 1}-09-01"
+                html_week = self.calculate_academic_week(target_date, sem_start_str)
+                html_is_even = (html_week % 2 == 0)
                 return {
                     "date": target_date.isoformat(),
                     "day_name": DAY_NAMES_RU[target_weekday],
-                    "week_number": 1,
-                    "is_even_week": False,
+                    "week_number": html_week,
+                    "is_even_week": html_is_even,
+                    "is_even": html_is_even,
                     "lessons": lessons,
                 }
         except Exception as e:
@@ -478,11 +482,15 @@ class TimetableParser:
                 logger.debug("HTML fallback не удался: %s", e)
 
         if not schedule_data:
+            fallback_sem = f"{target_date.year if target_date.month >= 8 else target_date.year - 1}-09-01"
+            fallback_week = self.calculate_academic_week(target_date, fallback_sem)
+            fallback_is_even = (fallback_week % 2 == 0)
             schedule_data = {
                 "date": date_str,
                 "day_name": DAY_NAMES_RU[target_date.weekday()],
-                "week_number": 1,
-                "is_even_week": False,
+                "week_number": fallback_week,
+                "is_even_week": fallback_is_even,
+                "is_even": fallback_is_even,
                 "lessons": [],
             }
 
