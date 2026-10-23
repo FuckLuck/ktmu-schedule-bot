@@ -98,8 +98,21 @@ def render_schedule_image(
     """
     date_str = schedule_data.get("date", "")
     day_name = schedule_data.get("day_name", "")
-    week_num = schedule_data.get("week_number", 1)
-    is_even = schedule_data.get("is_even_week", False)
+    week_num = schedule_data.get("week_number")
+    if not week_num and date_str:
+        try:
+            d_val = datetime.strptime(date_str, "%Y-%m-%d").date()
+            from timetable_parser import timetable_parser
+            sem = f"{d_val.year if d_val.month >= 8 else d_val.year - 1}-09-01"
+            week_num = timetable_parser.calculate_academic_week(d_val, sem)
+        except Exception:
+            week_num = 1
+    if not week_num:
+        week_num = 1
+
+    is_even = schedule_data.get("is_even_week", schedule_data.get("is_even"))
+    if is_even is None:
+        is_even = (int(week_num) % 2 == 0 if str(week_num).isdigit() else False)
     parity_str = "Чётная" if is_even else "Нечётная"
     lessons = schedule_data.get("lessons", [])
 

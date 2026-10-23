@@ -1198,8 +1198,8 @@ async def handle_schedule_today(message: Message, database: Database = default_d
         user_sub = user.get("subgroup", 0) if not is_group else 0
         user_overrides = user.get("subgroup_overrides") if not is_group else None
 
-        # Проверяем, завершились ли уже пары на сегодня
-        if are_today_pairs_finished(lessons, now_dt):
+        # Проверяем, завершились ли уже пары на сегодня (только если пары реально были)
+        if lessons and are_today_pairs_finished(lessons, now_dt):
             tomorrow = today + timedelta(days=1)
             tomorrow_sched = await timetable_parser.fetch_day_schedule(
                 group_id=group_id, group_url=group_url, target_date=tomorrow

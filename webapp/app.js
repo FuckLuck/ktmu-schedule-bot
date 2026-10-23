@@ -135,8 +135,11 @@
     let weekNum = Math.floor(diffDays / 7) + 1;
     if (weekNum < 1) weekNum = 1;
 
-    // Четность недели
-    const isoDate = targetDate.toISOString().split('T')[0];
+    // Четность недели (локальная дата без смещения часового пояса)
+    const year = targetDate.getFullYear();
+    const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+    const day = String(targetDate.getDate()).padStart(2, '0');
+    const isoDate = `${year}-${month}-${day}`;
     const overrides = scheduleDb?.config?.weekParityOverrides || {};
     let isEven;
     if (overrides[isoDate]) {

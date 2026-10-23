@@ -265,9 +265,9 @@ class TimetableParser:
 
             if custom_weeks and academic_week not in custom_weeks:
                 continue
-            if week_pattern == "odd" and academic_week % 2 == 0:
+            if week_pattern == "odd" and week_parity == "even":
                 continue
-            if week_pattern == "even" and academic_week % 2 == 1:
+            if week_pattern == "even" and week_parity == "odd":
                 continue
 
             inst_id = inst.get("instId")
@@ -472,11 +472,11 @@ class TimetableParser:
         except Exception as e:
             logger.warning("Ошибка получения расписания из API для группы %s: %s", group_id, e)
 
-        # Если API вернул пустые пары или упал, и есть group_url, пробуем HTML как fallback
-        if (not schedule_data or not schedule_data.get("lessons")) and group_url:
+        # Если API не ответил (упал с ошибкой) и есть group_url, пробуем HTML как fallback
+        if not schedule_data and group_url:
             try:
                 html_data = await self._parse_schedule_from_html(session, group_url, target_date)
-                if html_data and html_data.get("lessons"):
+                if html_data:
                     schedule_data = html_data
             except Exception as e:
                 logger.debug("HTML fallback не удался: %s", e)
@@ -817,8 +817,20 @@ def format_day_schedule_message(
     """
     date_str = schedule_data.get("date", "")
     day_name = schedule_data.get("day_name", "")
-    week_num = schedule_data.get("week_number", "")
-    parity_str = "четная" if schedule_data.get("is_even_week") else "нечетная"
+    week_num = schedule_data.get("week_number")
+    if not week_num and date_str:
+        try:
+            d_val = datetime.strptime(date_str, "%Y-%m-%d").date()
+            sem = f"{d_val.year if d_val.month >= 8 else d_val.year - 1}-09-01"
+            week_num = timetable_parser.calculate_academic_week(d_val, sem)
+        except Exception:
+            week_num = 1
+    if not week_num:
+        week_num = 1
+    is_even_val = schedule_data.get("is_even_week", schedule_data.get("is_even"))
+    if is_even_val is None:
+        is_even_val = (int(week_num) % 2 == 0 if str(week_num).isdigit() else False)
+    parity_str = "четная" if is_even_val else "нечетная"
     raw_lessons = schedule_data.get("lessons", [])
     lessons = filter_lessons_by_subgroup(raw_lessons, user_subgroup, subgroup_overrides)
 
@@ -951,8 +963,10 @@ def format_week_schedule_messages(week_data: list[dict[str, Any]], group_name: s
     для соблюдения лимита Telegram (4096 символов).
     """
     messages: list[str] = []
-    week_num = week_data[0].get("week_number", "") if week_data else ""
-    parity_str = "четная" if (week_data and week_data[0].get("is_even_week")) else "нечетная"
+    sample = week_data[0] if week_data else {}
+    week_num = sample.get("week_number", "")
+    is_even_val = sample.get("is_even_week", sample.get("is_even", False))
+    parity_str = "четная" if is_even_val else "нечетная"
 
     header = (
         f"🗓 <b>Расписание на неделю для группы</b> <code>{group_name}</code>\n"
