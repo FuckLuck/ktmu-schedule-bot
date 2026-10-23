@@ -35,7 +35,10 @@ class StructureParser:
     """
 
     def __init__(self, base_url: str = config.BASE_URL, database: Database = default_db):
-        self.base_url = base_url.rstrip("/")
+        raw_url = (base_url or config.BASE_URL).rstrip("/")
+        if "timetable-ktmu.ru" in raw_url:
+            raw_url = raw_url.replace("timetable-ktmu.ru", "raspisanie-ktmu.ru")
+        self.base_url = raw_url
         self.db = database
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -140,7 +143,8 @@ class StructureParser:
         Парсинг актуальных данных структуры из API бэкенда (raspisanie-ktmu.ru SPA).
         Извлекает все специальности, сопоставляет группы и формирует канонические относительные URL.
         """
-        api_url = f"{self.base_url}/api/storage/schedule-data-v2"
+        base = self.base_url.replace("timetable-ktmu.ru", "raspisanie-ktmu.ru")
+        api_url = f"{base}/api/storage/schedule-data-v2"
         logger.info("Запрос структуры через API хранилища: %s", api_url)
         raw = await self._fetch_json(session, api_url)
 

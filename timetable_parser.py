@@ -76,7 +76,10 @@ class TimetableParser:
     """
 
     def __init__(self, base_url: str = config.BASE_URL, database: Database = default_db):
-        self.base_url = base_url.rstrip("/")
+        raw_url = (base_url or config.BASE_URL).rstrip("/")
+        if "timetable-ktmu.ru" in raw_url:
+            raw_url = raw_url.replace("timetable-ktmu.ru", "raspisanie-ktmu.ru")
+        self.base_url = raw_url
         self.db = database
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -136,7 +139,8 @@ class TimetableParser:
         ):
             return self._site_data_cache
 
-        api_url = f"{self.base_url}/api/storage/schedule-data-v2"
+        base = self.base_url.replace("timetable-ktmu.ru", "raspisanie-ktmu.ru")
+        api_url = f"{base}/api/storage/schedule-data-v2"
         for attempt in range(3):
             try:
                 async with session.get(api_url, headers=self.headers, timeout=aiohttp.ClientTimeout(total=20)) as resp:
@@ -374,7 +378,8 @@ class TimetableParser:
         Пытается спарсить расписание со страницы группы по group_url через BeautifulSoup4,
         если страница отдается в виде статического HTML.
         """
-        full_url = urljoin(self.base_url, group_url)
+        base = self.base_url.replace("timetable-ktmu.ru", "raspisanie-ktmu.ru")
+        full_url = urljoin(base, group_url).replace("timetable-ktmu.ru", "raspisanie-ktmu.ru")
         try:
             async with session.get(full_url, headers=self.headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:

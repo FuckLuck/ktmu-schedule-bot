@@ -1,5 +1,7 @@
 import os
 from pathlib import Path
+from typing import Any
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -18,6 +20,14 @@ class Settings(BaseSettings):
 
     BOT_TOKEN: str = "YOUR_TELEGRAM_BOT_TOKEN_HERE"
     BASE_URL: str = "https://raspisanie-ktmu.ru"
+
+    @field_validator("BASE_URL", mode="before")
+    @classmethod
+    def sanitize_base_url(cls, v: Any) -> str:
+        s = str(v or "").strip().rstrip("/")
+        if "timetable-ktmu.ru" in s:
+            s = s.replace("timetable-ktmu.ru", "raspisanie-ktmu.ru")
+        return s or "https://raspisanie-ktmu.ru"
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", "ktmu_bot.db")
     TIMEZONE: str = "Europe/Moscow"
     CACHE_TTL_HOURS: int = 6
